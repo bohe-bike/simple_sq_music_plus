@@ -13,6 +13,7 @@ import com.sqmusicplus.v3.base.enums.PlugBrType;
 import com.sqmusicplus.v3.base.enums.SetConfigEnum;
 import com.sqmusicplus.v3.base.service.DownloadInfoService;
 import com.sqmusicplus.v3.config.SqConfigCache;
+import com.sqmusicplus.v3.download.DownloadProgressCache;
 import com.sqmusicplus.v3.download.DownloadStatus;
 import com.sqmusicplus.v3.download.vo.DownloadUrlResult;
 import com.sqmusicplus.v3.plug.entity.PlugSearchMusicResult;
@@ -39,21 +40,21 @@ import java.util.stream.IntStream;
 @Slf4j
 public abstract class SearchHanderAbstract implements SearchHander, Serializable {
 
-
-
     @Autowired
     private DownloadInfoService downloadInfoService;
+
+    @Autowired(required = false)
+    private DownloadProgressCache downloadProgressCache;
 
     public DownloadInfoService getDownloadInfoService() {
         return downloadInfoService;
     }
 
-
-//    @Override
-//    public List<String> searchTip(String searchKey) {
-//        //搂底使用酷我的
-//
-//    }
+    // @Override
+    // public List<String> searchTip(String searchKey) {
+    // //搂底使用酷我的
+    //
+    // }
 
     @Override
     public void dnonloadAndSaveToFile(DownloadInfo downloadInfo, SearchHander searchHander) {
@@ -63,19 +64,21 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
                 throw new RuntimeException("下载失败歌曲信息不完整歌曲详情转化歌曲失败:" + JSONObject.toJSONString(downloadInfo));
             }
             String baseMusicName_temp = music.getMusicName().trim();
-            String baseMusicArtistName_temp = music.getMusicArtists().stream().map(String::trim).limit(7).collect(Collectors.joining("&"));
+            String baseMusicArtistName_temp = music.getMusicArtists().stream().map(String::trim).limit(7)
+                    .collect(Collectors.joining("&"));
             String baseMusicAlbumName_temp = music.getMusicAlbum().trim();
-            String baseMusicMainArtistName_temp =  "群星";
-            if (StringUtils.isNotBlank( music.getMusicArtists().get(0).trim())){
-                baseMusicMainArtistName_temp =  music.getMusicArtists().get(0).trim();
+            String baseMusicMainArtistName_temp = "群星";
+            if (StringUtils.isNotBlank(music.getMusicArtists().get(0).trim())) {
+                baseMusicMainArtistName_temp = music.getMusicArtists().get(0).trim();
             }
 
-
             try {
-                String open_symbol_remove = SqConfigCache.getSqConfigValue(SetConfigEnum.SYSTEM_START_FILE_AND_FOLDER_SPECIAL_SYMBOL_REMOVE);
-                if (Boolean.valueOf(open_symbol_remove)){
-                    String open_symbol_remove_symbol = SqConfigCache.getSqConfigValue(SetConfigEnum.SYSTEM_START_FILE_AND_FOLDER_SPECIAL_SYMBOL_REMOVE_SYMBOL);
-                    //移除特殊字符
+                String open_symbol_remove = SqConfigCache
+                        .getSqConfigValue(SetConfigEnum.SYSTEM_START_FILE_AND_FOLDER_SPECIAL_SYMBOL_REMOVE);
+                if (Boolean.valueOf(open_symbol_remove)) {
+                    String open_symbol_remove_symbol = SqConfigCache
+                            .getSqConfigValue(SetConfigEnum.SYSTEM_START_FILE_AND_FOLDER_SPECIAL_SYMBOL_REMOVE_SYMBOL);
+                    // 移除特殊字符
                     if (StringUtils.isNotBlank(open_symbol_remove_symbol)) {
                         char[] chars = open_symbol_remove_symbol.toCharArray();
                         for (char c : chars) {
@@ -90,12 +93,14 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
                     }
                 }
             } catch (Exception e) {
-               log.error("歌曲信息移除特殊字符失败",e);
+                log.error("歌曲信息移除特殊字符失败", e);
             }
-            final String baseMusicName = baseMusicName_temp;;
-            //如果歌手超过7个则只取前7个
+            final String baseMusicName = baseMusicName_temp;
+            ;
+            // 如果歌手超过7个则只取前7个
             final String baseMusicArtistName = baseMusicArtistName_temp;
-//            final String baseMusicArtistName = music.getMusicArtists().stream().map(String::trim).collect(Collectors.joining("&"));
+            // final String baseMusicArtistName =
+            // music.getMusicArtists().stream().map(String::trim).collect(Collectors.joining("&"));
             final String baseMusicAlbumName = baseMusicAlbumName_temp;
             final String baseMusicMainArtistName = baseMusicMainArtistName_temp;
 
@@ -104,45 +109,46 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
             boolean isAudioBook = DbBooleanConvert.findByValue(downloadInfo.getAudioBook());
 
             String musicPath = SqConfigCache.getSqConfigValue(SetConfigEnum.SYSTEM_DOWNLOAD_PATH);
-            //数据库下载路径
+            // 数据库下载路径
             File file = new File(musicPath);
 
             HashMap<String, Object> pathTemplate = new HashMap<>();
             String music_path_template = SqConfigCache.getSqConfigValue(SetConfigEnum.SYSTEM_DOWNLOAD_FILE_TEMPLATE);
-            if (StringUtils.isBlank(music_path_template)){
-                music_path_template="${musicName} - ${artists}";
+            if (StringUtils.isBlank(music_path_template)) {
+                music_path_template = "${musicName} - ${artists}";
             }
 
             String artistsId = baseArtistsID.stream().map(String::trim).limit(7).collect(Collectors.joining("&"));
             pathTemplate.put("musicName", baseMusicName);
             pathTemplate.put("artists", baseMusicArtistName);
-            pathTemplate.put("artist", baseMusicMainArtistName); //新增主要歌手
+            pathTemplate.put("artist", baseMusicMainArtistName); // 新增主要歌手
             pathTemplate.put("album", baseMusicAlbumName);
             pathTemplate.put("albumId", baseAlbumID);
             pathTemplate.put("artistsId", artistsId);
             String fileName = "";
             try {
                 fileName = SpelTemplateUtils.formatTemplateWithDollar(music_path_template, pathTemplate);
-            }catch (Exception e){
+            } catch (Exception e) {
                 fileName = SpelTemplateUtils.formatTemplateWithDollar("${musicName} - ${artists}", pathTemplate);
             }
 
-            //拼接当前路径  歌手/专辑
+            // 拼接当前路径 歌手/专辑
             String basepath = baseMusicMainArtistName + File.separator + baseMusicAlbumName + File.separator;
-            //获取当前文件后缀
+            // 获取当前文件后缀
             String brType = downloadInfo.getDownloadBrType();
             PlugBrType byId = PlugBrType.findById(brType);
             File type = new File(file, basepath + fileName + "." + byId.getType());
-            //过滤掉不下载的格式歌曲
+            // 过滤掉不下载的格式歌曲
             String downloadFormat = SqConfigCache.getSqConfigValue(SetConfigEnum.SYSTEM_DOWNLOAD_FILE_AUDIO_FORMAT);
-            if (!downloadFormat.equals("auto")){
-                if (downloadFormat.equals(byId.getType())){
+            if (!downloadFormat.equals("auto")) {
+                if (downloadFormat.equals(byId.getType())) {
                     log.info("歌曲{}---->因为设置忽略下载此格式音乐{}", baseMusicName, byId.getType());
-                    throw new RuntimeException("歌曲"+baseMusicName+"---->因为设置忽略下载此格式音乐("+byId.getType()+"):" + JSONObject.toJSONString(downloadInfo));
+                    throw new RuntimeException("歌曲" + baseMusicName + "---->因为设置忽略下载此格式音乐(" + byId.getType() + "):"
+                            + JSONObject.toJSONString(downloadInfo));
                 }
             }
             log.debug("开始下载---->{}", baseMusicName);
-            //创建任务
+            // 创建任务
             String sqConfigValue = SqConfigCache.getSqConfigValue(SetConfigEnum.SYSTEM_FILE_EXIST_NOT_DOWNLOAD);
             if (Boolean.valueOf(sqConfigValue)) {
                 if (type.exists()) {
@@ -150,56 +156,65 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
                     return;
                 }
             }
-            //获取下载链接
+            // 获取下载链接
             DownloadUrlResult downloadUrlResult = searchHander.getDownloadUrl(downloadInfo);
             if (downloadUrlResult == null || StringUtils.isEmpty(downloadUrlResult.getUrl())) {
                 try {
-                    throw new RuntimeException(downloadInfo.getDownloadMusicname() + "(未获取到播放链接)下载失败:" + downloadUrlResult.getErrorMsg());
+                    throw new RuntimeException(
+                            downloadInfo.getDownloadMusicname() + "(未获取到播放链接)下载失败:" + downloadUrlResult.getErrorMsg());
                 } catch (RuntimeException e) {
-                    throw new RuntimeException(downloadInfo.getDownloadMusicname() + "(未获取到播放链接)下载失败:" + e.getMessage());
+                    throw new RuntimeException(
+                            downloadInfo.getDownloadMusicname() + "(未获取到播放链接)下载失败:" + e.getMessage());
                 }
             }
 
-            DownloadUtils.download(downloadUrlResult.getUrl(), type, onProcess->{
-                log.debug("歌曲：{} 进度：{} , byte信息：{}/{}",music.getMusicName(),onProcess.getProgress(),onProcess.getBytesRead(),onProcess.getTotalBytes());
-            },onSuccess ->
-            {
-                log.debug("歌曲：{} 文件下载完成处理后续步骤",music.getMusicName());
+            DownloadUtils.download(downloadUrlResult.getUrl(), type, onProcess -> {
+                log.debug("歌曲：{} 进度：{} , byte信息：{}/{}", music.getMusicName(), onProcess.getProgress(),
+                        onProcess.getBytesRead(), onProcess.getTotalBytes());
+                if (downloadProgressCache != null && downloadInfo.getId() != null) {
+                    downloadProgressCache.update(downloadInfo.getId(), onProcess.getProgress(),
+                            onProcess.getBytesRead(), onProcess.getTotalBytes());
+                }
+            }, onSuccess -> {
+                log.debug("歌曲：{} 文件下载完成处理后续步骤", music.getMusicName());
             }, onFailure -> {
                 onFailure.printStackTrace();
                 log.debug("下载失败(文件写入异常){}", music.getMusicName());
                 throw new RuntimeException("下载失败:" + music.getMusicName());
-            },onComplete -> {
+            }, onComplete -> {
                 Artists artists = searchHander.queryArtistById(baseArtistsID.get(0));
-//                String getSearheads = "";
-//                try {
-//                    getSearheads = ReflectUtil.invoke(searchHander.getConfig(), "getSearheads");
-//                } catch (Exception ignored) {
-//                }
-                //歌手图片地址
+                // String getSearheads = "";
+                // try {
+                // getSearheads = ReflectUtil.invoke(searchHander.getConfig(), "getSearheads");
+                // } catch (Exception ignored) {
+                // }
+                // 歌手图片地址
                 String downloadurl = artists.getMusicArtistsPhoto();
-                //歌手图片保存路径
+                // 歌手图片保存路径
                 String downliadpath = musicPath + File.separator + baseMusicMainArtistName;
-                //人物图片
+                // 人物图片
                 File Artistsfile = FileUtils.findFile(downliadpath + File.separator, "cover");
 
                 if (Artistsfile == null || (!Artistsfile.exists() && !isAudioBook)) {
                     try {
-                        DownloadUtils.download(downloadurl, downliadpath,onProcess->{
-                            log.debug("歌曲歌手图片：{} 进度：{} , byte信息：{}/{}",music.getMusicName(),onProcess.getProgress(),onProcess.getBytesRead(),onProcess.getTotalBytes());
-                        },onSuccess ->
-                        {
-                            log.debug("歌曲歌手图片：{} 文件下载完成处理后续步骤",music.getMusicName());
-                        },onFailure -> {
+                        DownloadUtils.download(downloadurl, downliadpath, onProcess -> {
+                            log.debug("歌曲歌手图片：{} 进度：{} , byte信息：{}/{}", music.getMusicName(), onProcess.getProgress(),
+                                    onProcess.getBytesRead(), onProcess.getTotalBytes());
+                        }, onSuccess -> {
+                            log.debug("歌曲歌手图片：{} 文件下载完成处理后续步骤", music.getMusicName());
+                        }, onFailure -> {
                             onFailure.printStackTrace();
                             log.debug("歌曲歌手图片下载失败：{}", music.getMusicName());
                         }, onArtistsPhoto -> {
                             try {
                                 String suffix = FileTypeUtil.getType(onArtistsPhoto);
-                                FileUtil.copy(onArtistsPhoto, new File(downliadpath + File.separator + "cover." + suffix), false);
-                                FileUtil.copy(onArtistsPhoto, new File(downliadpath + File.separator + "artist." + suffix), false);
-                                //取出文件名后缀
-                                FileUtil.copy(onArtistsPhoto, new File(downliadpath + File.separator + "folder." + suffix), true);
+                                FileUtil.copy(onArtistsPhoto,
+                                        new File(downliadpath + File.separator + "cover." + suffix), false);
+                                FileUtil.copy(onArtistsPhoto,
+                                        new File(downliadpath + File.separator + "artist." + suffix), false);
+                                // 取出文件名后缀
+                                FileUtil.copy(onArtistsPhoto,
+                                        new File(downliadpath + File.separator + "folder." + suffix), true);
                             } catch (Exception e) {
                                 SafeFileUtil.safeDelete(onArtistsPhoto);
                             } finally {
@@ -221,7 +236,7 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
                         e.printStackTrace();
                     }
                 }
-                //专辑图片
+                // 专辑图片
                 Album album = searchHander.queryAlbumById(baseAlbumID.toString());
                 String albumImg = album.getAlbumImg();
                 if (isAudioBook) {
@@ -231,29 +246,31 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
                 if (StringUtils.isEmpty(albumImg)) {
                     downloadalubimage = false;
                 }
-                String imagePath = musicPath + File.separator + baseMusicMainArtistName + File.separator + baseMusicAlbumName;
+                String imagePath = musicPath + File.separator + baseMusicMainArtistName + File.separator
+                        + baseMusicAlbumName;
                 if (StringUtils.isEmpty(baseMusicAlbumName) && baseMusicAlbumName.equals("other")) {
                     String suffix = FileTypeUtil.getType(Artistsfile);
                     FileUtil.copy(Artistsfile, new File(imagePath + File.separator + "cover." + suffix), true);
                 }
                 File albumfile = FileUtils.findFile(imagePath + File.separator, "cover");
-                //专辑图片下载与标签写入
+                // 专辑图片下载与标签写入
                 if (albumfile == null || (!albumfile.exists() && downloadalubimage)) {
                     try {
-                        DownloadUtils.download(albumImg, imagePath, onProcess->{
-                            log.debug("歌曲专辑图片：{} 进度：{} , byte信息：{}/{}",music.getMusicName(),onProcess.getProgress(),onProcess.getBytesRead(),onProcess.getTotalBytes());
-                        },onSuccess ->
-                        {
-                            log.debug("歌曲专辑图片：{} 文件下载完成处理后续步骤",music.getMusicName());
-                        },onFailure -> {
+                        DownloadUtils.download(albumImg, imagePath, onProcess -> {
+                            log.debug("歌曲专辑图片：{} 进度：{} , byte信息：{}/{}", music.getMusicName(), onProcess.getProgress(),
+                                    onProcess.getBytesRead(), onProcess.getTotalBytes());
+                        }, onSuccess -> {
+                            log.debug("歌曲专辑图片：{} 文件下载完成处理后续步骤", music.getMusicName());
+                        }, onFailure -> {
                             onFailure.printStackTrace();
                             log.debug("歌曲专辑图片下载失败：{}", music.getMusicName());
-                        },onAlbumImg -> {
+                        }, onAlbumImg -> {
                             File cover = null;
                             try {
                                 String suffix = FileTypeUtil.getType(onAlbumImg);
                                 onAlbumImg = FileUtil.rename(onAlbumImg, "cover." + suffix, true);
-                                FileUtil.copy(onAlbumImg, new File(imagePath + File.separator + "album." + suffix), true);
+                                FileUtil.copy(onAlbumImg, new File(imagePath + File.separator + "album." + suffix),
+                                        true);
                                 if (isAudioBook) {
                                     FileUtil.copyFile(cover, Artistsfile);
                                 }
@@ -298,16 +315,17 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
     @Override
     public DownloadInfo musicToDownloadInfo(Music music, PlugBrType brType, Boolean isAudioBook) {
         List<PlugBrType> bits = music.getBits();
-        if (brType==null){
+        if (brType == null) {
             brType = MusicUtils.getMaxBr(bits);
         }
-        String bitsStr = bits.stream().map(plugBrType -> plugBrType.getBit().toString()).collect(Collectors.joining(","));
+        String bitsStr = bits.stream().map(plugBrType -> plugBrType.getBit().toString())
+                .collect(Collectors.joining(","));
         String plugBrTypes = bits.stream().map(plugBrType -> plugBrType.getId()).collect(Collectors.joining(","));
 
         return new DownloadInfo()
                 .setDownloadGid(music.getId())
                 .setDownloadTime(new Date())
-                .setDownloadFile(music.getMusicName()+" - "+String.join("&", music.getMusicArtists()))
+                .setDownloadFile(music.getMusicName() + " - " + String.join("&", music.getMusicArtists()))
                 .setDownloadMusicId(music.getId())
                 .setDownloadPlugName(brType.getPlugName())
                 .setDownloadBrType(brType.getId())
@@ -317,7 +335,7 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
                 .setDownloadMusicInfo(music.getDataInfo().toJSONString())
                 .setDownloadStatus(DownloadStatus.waiting.getValue())
                 .setSpringName(brType.getSpringName())
-                .setAudioBook(isAudioBook? DbBooleanConvert.YES.getValue():DbBooleanConvert.NO.getValue())
+                .setAudioBook(isAudioBook ? DbBooleanConvert.YES.getValue() : DbBooleanConvert.NO.getValue())
                 .setDownloadUpdateTime(new Date())
                 .setRewriteMp3tag(DbBooleanConvert.YES.getValue())
                 .setDownloadBits(bitsStr)
@@ -327,12 +345,13 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
     @Override
     public DownloadInfo musicToDownloadInfo(PlugSearchMusicResult music, PlugBrType brType, Boolean isAudioBook) {
         List<PlugBrType> bits = music.getBrTypes();
-        if (brType==null){
+        if (brType == null) {
             brType = MusicUtils.getMaxBr(bits);
         }
-        String bitsStr = bits.stream().map(plugBrType -> plugBrType.getBit().toString()).collect(Collectors.joining(","));
+        String bitsStr = bits.stream().map(plugBrType -> plugBrType.getBit().toString())
+                .collect(Collectors.joining(","));
         String plugBrTypes = bits.stream().map(plugBrType -> plugBrType.getId()).collect(Collectors.joining(","));
-        String jsonString ="";
+        String jsonString = "";
         try {
             jsonString = music.getDataInfo().toJSONString();
         } catch (Exception e) {
@@ -341,7 +360,7 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
         return new DownloadInfo()
                 .setDownloadGid(music.getId())
                 .setDownloadTime(new Date())
-                .setDownloadFile(music.getName()+" - "+String.join("&", music.getArtistName()))
+                .setDownloadFile(music.getName() + " - " + String.join("&", music.getArtistName()))
                 .setDownloadMusicId(music.getId())
                 .setDownloadPlugName(brType.getPlugName())
                 .setDownloadBrType(brType.getId())
@@ -351,7 +370,7 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
                 .setDownloadMusicInfo(jsonString)
                 .setDownloadStatus(DownloadStatus.waiting.getValue())
                 .setSpringName(brType.getSpringName())
-                .setAudioBook(isAudioBook? DbBooleanConvert.YES.getValue():DbBooleanConvert.NO.getValue())
+                .setAudioBook(isAudioBook ? DbBooleanConvert.YES.getValue() : DbBooleanConvert.NO.getValue())
                 .setDownloadUpdateTime(new Date())
                 .setRewriteMp3tag(DbBooleanConvert.YES.getValue())
                 .setDownloadBits(bitsStr)
@@ -368,25 +387,27 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
      * @param downloadInfo
      */
     private void extracted(Music music, File onSuccess, File albumfile, DownloadInfo downloadInfo) {
-        //是否需要标签
+        // 是否需要标签
         Integer rewriteMp3tag = downloadInfo.getRewriteMp3tag();
 
-
-        //创建歌词
+        // 创建歌词
         try {
 
             if (StringUtils.isNotEmpty(music.getMusicLyric())) {
                 String name = FileUtil.getPrefix(onSuccess);
                 log.debug("lrc地址{}", onSuccess.getParentFile() + File.separator + name + ".lrc");
-                FileUtil.writeBytes(music.getMusicLyric().getBytes(), onSuccess.getParentFile() + File.separator + name + ".lrc");
+                FileUtil.writeBytes(music.getMusicLyric().getBytes(),
+                        onSuccess.getParentFile() + File.separator + name + ".lrc");
             }
         } catch (IORuntimeException e) {
             log.error(e.getMessage());
         }
-        //修改文件
+        // 修改文件
         try {
             if (DbBooleanConvert.findByValue(rewriteMp3tag)) {
-                MusicUtils.setMediaFileInfo(onSuccess, music.getMusicName(), music.getMusicAlbum(), String.join(";", music.getMusicArtists()), "SqMusic", music.getMusicLyric(), albumfile,music.getMusicArtists().get(0));
+                MusicUtils.setMediaFileInfo(onSuccess, music.getMusicName(), music.getMusicAlbum(),
+                        String.join(";", music.getMusicArtists()), "SqMusic", music.getMusicLyric(), albumfile,
+                        music.getMusicArtists().get(0));
                 log.debug("标签写入成功{}", music.getMusicName());
             }
 
@@ -394,7 +415,8 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
             log.debug("下载错误（标签写入错误）{}  ----------> {}", music.getMusicName(), e.getMessage());
             log.error(e.getMessage());
             e.printStackTrace();
-            throw new RuntimeException("下载失败（标签写入错误）:" + downloadInfo.getDownloadMusicname() + "------->" + e.getMessage());
+            throw new RuntimeException(
+                    "下载失败（标签写入错误）:" + downloadInfo.getDownloadMusicname() + "------->" + e.getMessage());
         }
     }
 
@@ -430,10 +452,10 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
         }
         downloadInfo.setDownloadBrType(trim);
 
-//        String trim1 = downloadInfo.getDownloadMusicInfo().trim();
-//        if (StringUtils.isBlank(trim1)) {
-//            throw new RuntimeException("歌曲校验失败：歌曲信息为空");
-//        }
+        // String trim1 = downloadInfo.getDownloadMusicInfo().trim();
+        // if (StringUtils.isBlank(trim1)) {
+        // throw new RuntimeException("歌曲校验失败：歌曲信息为空");
+        // }
         String trim2 = downloadInfo.getDownloadPlugName().trim();
         if (StringUtils.isBlank(trim2)) {
             throw new RuntimeException("歌曲校验失败：歌曲插件名称为空");
@@ -463,8 +485,8 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
     }
 
     @Override
-    public Music musicIgnoreCheck(Music music){
-        if (music==null){
+    public Music musicIgnoreCheck(Music music) {
+        if (music == null) {
             return null;
         }
         String id = music.getId().trim();
@@ -473,7 +495,7 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
             return null;
         }
         String ignoreMusicName = SqConfigCache.getSqConfigValue(SetConfigEnum.SYSTEM_IGNORE_ACCOMPANIMENT);
-        if (StringUtils.isNotBlank(ignoreMusicName)&&Boolean.parseBoolean(ignoreMusicName)){
+        if (StringUtils.isNotBlank(ignoreMusicName) && Boolean.parseBoolean(ignoreMusicName)) {
             String musicName = music.getMusicName().trim();
             musicName = musicName.replaceAll("（", "(").replaceAll("）", ")");
             ArrayList<String> strings = new ArrayList<>();
@@ -495,25 +517,26 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
         for (String musicArtist : musicArtists) {
             // 忽略的歌手
             for (String s : split) {
-                if (StringUtils.isNotBlank(s)&&musicArtist.contains(s)) {
-                    log.info("触发歌手忽略音乐：{}--->{}", music.getMusicName(),s);
+                if (StringUtils.isNotBlank(s) && musicArtist.contains(s)) {
+                    log.info("触发歌手忽略音乐：{}--->{}", music.getMusicName(), s);
                     return null;
                 }
             }
         }
-        //忽略专辑
+        // 忽略专辑
         String ignoreAlbum = SqConfigCache.getSqConfigValue(SetConfigEnum.SYSTEM_SYNC_ALBUM_EXCLUDE);
         String musicAlbum = music.getMusicAlbum().trim();
         for (String s : ignoreAlbum.split("\\|")) {
-            if (StringUtils.isNotBlank(s)&&musicAlbum.contains(s)) {
-                log.info("触发专辑忽略音乐：{}--->{}", music.getMusicName(),s);
+            if (StringUtils.isNotBlank(s) && musicAlbum.contains(s)) {
+                log.info("触发专辑忽略音乐：{}--->{}", music.getMusicName(), s);
                 return null;
             }
         }
         return music;
     }
+
     public DownloadInfo musicIgnoreCheck(DownloadInfo downloadInfo) {
-        if (downloadInfo==null){
+        if (downloadInfo == null) {
             return null;
         }
         String id = downloadInfo.getDownloadMusicId().trim();
@@ -522,7 +545,7 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
             return null;
         }
         String ignoreMusicName = SqConfigCache.getSqConfigValue(SetConfigEnum.SYSTEM_IGNORE_ACCOMPANIMENT);
-        if (StringUtils.isNotBlank(ignoreMusicName)&&Boolean.parseBoolean(ignoreMusicName)){
+        if (StringUtils.isNotBlank(ignoreMusicName) && Boolean.parseBoolean(ignoreMusicName)) {
             String musicName = downloadInfo.getDownloadMusicname().trim();
             musicName = musicName.replaceAll("（", "(").replaceAll("）", ")");
             ArrayList<String> strings = new ArrayList<>();
@@ -532,7 +555,7 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
             strings.add("(片段)");
             strings.add("(片段版)");
             for (String s : strings) {
-                if (StringUtils.isNotBlank(s)&&musicName.contains(s)) {
+                if (StringUtils.isNotBlank(s) && musicName.contains(s)) {
                     log.info("触发伴奏忽略音乐：{}", musicName);
                     return null;
                 }
@@ -544,25 +567,24 @@ public abstract class SearchHanderAbstract implements SearchHander, Serializable
         for (String musicArtist : musicArtists) {
             // 忽略的歌手
             for (String s : split) {
-                if (StringUtils.isNotBlank(s)&&musicArtist.contains(s)) {
-                    log.info("触发歌手忽略音乐：{}--->{}", downloadInfo.getDownloadMusicname(),s);
+                if (StringUtils.isNotBlank(s) && musicArtist.contains(s)) {
+                    log.info("触发歌手忽略音乐：{}--->{}", downloadInfo.getDownloadMusicname(), s);
                     return null;
                 }
             }
         }
-        //忽略专辑
+        // 忽略专辑
         String ignoreAlbum = SqConfigCache.getSqConfigValue(SetConfigEnum.SYSTEM_SYNC_ALBUM_EXCLUDE);
         String musicAlbum = downloadInfo.getDownloadAlbumname().trim();
         for (String s : ignoreAlbum.split("\\|")) {
-            if (StringUtils.isNotBlank(s)&&
+            if (StringUtils.isNotBlank(s) &&
                     musicAlbum.contains(s)) {
-                log.info("触发专辑忽略音乐：{}--->{}", downloadInfo.getDownloadMusicname(),s);
+                log.info("触发专辑忽略音乐：{}--->{}", downloadInfo.getDownloadMusicname(), s);
                 return null;
             }
         }
         return downloadInfo;
     }
-
 
     public List<DownloadInfo> musicIgnoreCheck(List<DownloadInfo> downloadInfos) {
         ArrayList<DownloadInfo> downloadInfos1 = new ArrayList<>();

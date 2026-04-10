@@ -12,7 +12,7 @@ CREATE TABLE download_info (
     download_musicname VARCHAR(255) DEFAULT NULL,
     download_artistname VARCHAR(255) DEFAULT NULL,
     download_albumname VARCHAR(255) DEFAULT NULL,
-    download_msg VARCHAR(255) DEFAULT NULL,
+    download_msg TEXT,
     version VARCHAR(255) DEFAULT NULL,
     download_music_info TEXT DEFAULT NULL,
     download_status VARCHAR(255) DEFAULT NULL,

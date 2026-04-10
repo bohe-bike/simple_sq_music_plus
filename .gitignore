@@ -33,3 +33,9 @@ build/
 .vscode/
 ### package-lock 在vue目录下的###
 vue/package-lock.json
+
+
+extracted_web_original
+mysql_data
+music
+*.tar

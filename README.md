@@ -1,9 +1,11 @@
-
 最新NAS坏了 等修好了再更新版本
 
 ### 出现问题先升级到最新版本
+
 ### simple_sq_music_plus
+
 是下载音乐工具，可以当普通的音乐下载工具使用，支持，flac，ape，mp3等格式的下载（根据码率不同）， 下载的歌曲目录结构支持emby 与 subsonic（后续开放） 类的服务，下载文件支持文件标签识别，歌词下载。
+
 ```js
 \Music下载根路径
        \歌手名称
@@ -12,14 +14,12 @@
                        2- 歌曲2.flac
 
 ```
+
 默认支持群辉等第三方音乐服务标识：
 emby,jellyfin识别请参考如下配置 https://support.emby.media/support/solutions/articles/44001159113-music-naming
 
 - 默认账号：admin
-- 默认密码：admin  （登录后设置自行修改）
-
-
-
+- 默认密码：admin （登录后设置自行修改）
 
 效果截图
 ![wechat_2025-09-28_160749_034.png](img/wechat_2025-09-28_160749_034.png)
@@ -34,19 +34,30 @@ emby,jellyfin识别请参考如下配置 https://support.emby.media/support/solu
 ![wechat_2025-09-28_161505_837.png](img/wechat_2025-09-28_161505_837.png)
 ![wechat_2025-09-28_161552_590.png](img/wechat_2025-09-28_161552_590.png)
 
-
-
 ### 2.x迁移3.x版本
+
 1. 导出已经同步过的歌单、专辑、歌手信息（文件是.json）
-![img.png](img/img.png)
+   ![img.png](img/img.png)
 2. 3.0版本导入已经同步信息(时间较长耐心等待)
-![wechat_2025-09-28_163226_700.png](img/wechat_2025-09-28_163226_700.png)
+   ![wechat_2025-09-28_163226_700.png](img/wechat_2025-09-28_163226_700.png)
 
 ### 运行项目
+
 #### 1. docker-compose（推荐--mysql启动慢导致报错可以多运行几次）
+
     运行docker-compose文件即可（本地编译使用docker-compose-local）
+
+#### 本地前端项目说明
+
+前端项目已迁移到独立目录，本仓库的本地开发编排默认使用外部前端工程进行构建。
+
+- 当前本地 compose 前端构建目录：G:/Projects/simple_sq_music_plus_web
+- 本地执行 docker compose -f docker-compose.local.yml up -d --build 前，请确认该目录存在且可正常构建
+
 #### 2.docker启动请参考docker-compose配置手动启动
+
 1. 启动mysql
+
 ```dockerfile
 # 拉取 MySQL 5.7 镜像
 docker pull mysql:5.7
@@ -65,7 +76,9 @@ docker run -d \
   --network simple_sq_music_plus_sq-app-network \
   mysql:5.8
 ```
+
 2. 启动后端服务
+
 ```dockerfile
 # 拉取后端服务镜像（使用最新版本号）
 docker pull registry.cn-hangzhou.aliyuncs.com/sqdockler/simple_sq_music_plus:v3.0.8
@@ -83,7 +96,9 @@ docker run -d \
   --network simple_sq_music_plus_sq-app-network \
   registry.cn-hangzhou.aliyuncs.com/sqdockler/simple_sq_music_plus:latest
 ```
+
 3. 启动前段服务
+
 ```dockerfile
 # 拉取前端服务镜像（使用最新版本号）
 docker pull registry.cn-hangzhou.aliyuncs.com/sqdockler/simple_sq_music_plus_web:v3.0.5
@@ -99,6 +114,7 @@ docker run -d \
 ```
 
 Todo：
+
 1. 页面增加播放页面播放删除
 2. 支持苹果音乐
 3. ~~增加网易云监听歌单~~
@@ -108,6 +124,3 @@ Todo：
 7. ~~手机模式下专辑和歌手不展示问题~~
 
 #### 3.0后续升级脚本可以使用scrpit下的 check_update.sh脚本
-
-
-

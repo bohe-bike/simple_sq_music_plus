@@ -26,7 +26,7 @@
 #
 #  sqmusic_web:
 #    build:
-#      context: ./vue/
+#      context: G:/Projects/simple_sq_music_plus_web
 #      dockerfile: Dockerfile
 #      args:
 #        - NODE_OPTIONS=--max-old-space-size=4096

@@ -14,7 +14,6 @@ import java.net.URLEncoder;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.*;
-import java.util.concurrent.Executor;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
@@ -34,13 +33,13 @@ public class OkHttpUtils {
     private String url;
     private Request.Builder request;
     private static HashMap<String, List<Cookie>> cookieStore = new HashMap<>();
-    
+
     // 默认启用流量监控的拦截器
     private static final Interceptor trafficInterceptor = new Interceptor() {
         @Override
         public Response intercept(Chain chain) throws IOException {
             Request request = chain.request();
-            
+
             // 记录请求体大小（上传流量）
             long requestBodySize = 0;
             if (request.body() != null) {
@@ -49,16 +48,16 @@ public class OkHttpUtils {
                     SystemUtils.recordAppUpload(requestBodySize);
                 }
             }
-            
+
             // 执行请求
             Response response = chain.proceed(request);
-            
+
             // 记录响应体大小（下载流量）
             long responseBodySize = response.body().contentLength();
             if (responseBodySize > 0) {
                 SystemUtils.recordAppDownload(responseBodySize);
             }
-            
+
             return response;
         }
     };
@@ -75,13 +74,14 @@ public class OkHttpUtils {
                     Cache cache = new Cache(cacheDirectory, 10 * 1024 * 1024); // 10MB 缓存
 
                     TrustManager[] trustManagers = buildTrustManagers();
-                    
+
                     // 默认添加流量监控拦截器
                     okHttpClient = new OkHttpClient.Builder()
-                            .connectTimeout(0, TimeUnit.MILLISECONDS)
-                            .writeTimeout(0, TimeUnit.MILLISECONDS)
-                            .readTimeout(0, TimeUnit.MILLISECONDS)
-                            .sslSocketFactory(createSSLSocketFactory(trustManagers), (X509TrustManager) trustManagers[0])
+                            .connectTimeout(15, TimeUnit.SECONDS)
+                            .writeTimeout(30, TimeUnit.SECONDS)
+                            .readTimeout(60, TimeUnit.SECONDS)
+                            .sslSocketFactory(createSSLSocketFactory(trustManagers),
+                                    (X509TrustManager) trustManagers[0])
                             .hostnameVerifier((hostName, session) -> true)
                             .retryOnConnectionFailure(true)
                             .followRedirects(followRedirects)
@@ -100,8 +100,9 @@ public class OkHttpUtils {
                             })
                             .addInterceptor(trafficInterceptor) // 默认启用流量监控
                             .build();
-                    
-                    addHeader("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36");
+
+                    addHeader("User-Agent",
+                            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36");
                 }
             }
         }
@@ -113,7 +114,7 @@ public class OkHttpUtils {
      * @return
      */
     private static Semaphore getSemaphoreInstance() {
-        //只能1个线程同时访问
+        // 只能1个线程同时访问
         synchronized (OkHttpUtils.class) {
             if (semaphore == null) {
                 semaphore = new Semaphore(0);
@@ -130,6 +131,7 @@ public class OkHttpUtils {
     public static OkHttpUtils builder() {
         return new OkHttpUtils(true);
     }
+
     /**
      * 创建OkHttpUtils禁止重定向
      */
@@ -138,7 +140,7 @@ public class OkHttpUtils {
     }
 
     public static Call newCall(Request request) {
-        if (okHttpClient == null){
+        if (okHttpClient == null) {
             okHttpClient = new OkHttpClient();
         }
         return okHttpClient.newCall(request);
@@ -153,7 +155,6 @@ public class OkHttpUtils {
         addHeader("Cookie", cookie);
         return this;
     }
-
 
     /**
      * 添加url
@@ -184,7 +185,7 @@ public class OkHttpUtils {
     /**
      * 添加参数
      *
-     * @param param   参数名
+     * @param param 参数名
      * @return
      */
     public OkHttpUtils addParam(Map<String, String> param) {
@@ -225,10 +226,8 @@ public class OkHttpUtils {
             urlBuilder.append("?");
             try {
                 for (Map.Entry<String, String> entry : paramMap.entrySet()) {
-                    urlBuilder.append(URLEncoder.encode(entry.getKey(), "utf-8")).
-                            append("=").
-                            append(URLEncoder.encode(entry.getValue(), "utf-8")).
-                            append("&");
+                    urlBuilder.append(URLEncoder.encode(entry.getKey(), "utf-8")).append("=")
+                            .append(URLEncoder.encode(entry.getValue(), "utf-8")).append("&");
                 }
             } catch (Exception e) {
                 e.printStackTrace();
@@ -262,18 +261,18 @@ public class OkHttpUtils {
             requestBody = formBody.build();
         }
         request = new Request.Builder().post(requestBody)
-                .url(url)  .cacheControl(new CacheControl.Builder()
+                .url(url).cacheControl(new CacheControl.Builder()
                         .maxAge(10, TimeUnit.MINUTES) // 新增：缓存有效期10分钟
                         .build());
         return this;
     }
+
     public OkHttpUtils post(RequestBody requestBody) {
         request = new Request.Builder().post(requestBody).url(url).cacheControl(new CacheControl.Builder()
                 .maxAge(10, TimeUnit.MINUTES) // 新增：缓存有效期10分钟
                 .build());
         return this;
     }
-
 
     /**
      * 初始化post方法
@@ -282,7 +281,7 @@ public class OkHttpUtils {
      *                   false等于普通的表单提交
      * @return
      */
-    public OkHttpUtils post(boolean isJsonPost,String bodyStr) {
+    public OkHttpUtils post(boolean isJsonPost, String bodyStr) {
         RequestBody requestBody;
         if (isJsonPost) {
             requestBody = RequestBody.create(MediaType.parse("application/json; charset=utf-8"), bodyStr);
@@ -300,6 +299,7 @@ public class OkHttpUtils {
     public OkHttpUtils post(boolean isJsonPost, JSONObject bodyStr) {
         return post(isJsonPost, bodyStr.toJSONString());
     }
+
     /**
      * 同步请求
      *
@@ -313,7 +313,7 @@ public class OkHttpUtils {
             return response.body().string();
         } catch (IOException e) {
             e.printStackTrace();
-           return "请求失败：" + e.getMessage();
+            return "请求失败：" + e.getMessage();
         }
     }
 
@@ -326,15 +326,15 @@ public class OkHttpUtils {
         setHeader(request);
         try {
             Response response = okHttpClient.newCall(request.build()).execute();
-//            System.out.println("Response code: " + response.code());
-//            System.out.println("Response URL: " + response.request().url());
-//            if (response.isRedirect()) {
-//                System.out.println("Redirected to: " + response.header("Location"));
-//            }
+            // System.out.println("Response code: " + response.code());
+            // System.out.println("Response URL: " + response.request().url());
+            // if (response.isRedirect()) {
+            // System.out.println("Redirected to: " + response.header("Location"));
+            // }
             // 打印所有 Cookie
-//            for (String cookie : response.headers("Set-Cookie")) {
-//                System.out.println("Set-Cookie: " + cookie);
-//            }
+            // for (String cookie : response.headers("Set-Cookie")) {
+            // System.out.println("Set-Cookie: " + cookie);
+            // }
             assert response.body() != null;
             return response;
         } catch (IOException e) {
@@ -342,38 +342,38 @@ public class OkHttpUtils {
             return null;
         }
     }
-//    /**
-//     * 同步禁止跳转302
-//     */
-//    public Response syncReturnResponseNoRedirect() {
-//        //转为原子类
-//        AtomicReference<Response> resresponse = new AtomicReference<>();
-//        okHttpClient.followUpRequest
-//             okHttpClient.newCall(request.build()).enqueue(new Callback() {
-//
-//                 @Override
-//                public void onResponse(@NotNull Call call, @NotNull Response response) throws IOException {
-//                     resresponse.set(response);
-//                }
-//
-//                @Override
-//                public void onFailure(@NotNull Call call, @NotNull IOException e) {
-//
-//                }
-//            });
-//             //等待返回值
-//             while (resresponse.get() == null) {
-//                 try {
-//                     Thread.sleep(100);
-//                 } catch (InterruptedException e) {
-//                     e.printStackTrace();
-//                 }
-//             }
-//
-//            return resresponse.get();
-//
-//    }
-
+    // /**
+    // * 同步禁止跳转302
+    // */
+    // public Response syncReturnResponseNoRedirect() {
+    // //转为原子类
+    // AtomicReference<Response> resresponse = new AtomicReference<>();
+    // okHttpClient.followUpRequest
+    // okHttpClient.newCall(request.build()).enqueue(new Callback() {
+    //
+    // @Override
+    // public void onResponse(@NotNull Call call, @NotNull Response response) throws
+    // IOException {
+    // resresponse.set(response);
+    // }
+    //
+    // @Override
+    // public void onFailure(@NotNull Call call, @NotNull IOException e) {
+    //
+    // }
+    // });
+    // //等待返回值
+    // while (resresponse.get() == null) {
+    // try {
+    // Thread.sleep(100);
+    // } catch (InterruptedException e) {
+    // e.printStackTrace();
+    // }
+    // }
+    //
+    // return resresponse.get();
+    //
+    // }
 
     /**
      * 异步请求，有返回值
@@ -440,7 +440,6 @@ public class OkHttpUtils {
         }
     }
 
-
     /**
      * 生成安全套接字工厂，用于https请求的证书跳过
      *
@@ -459,7 +458,7 @@ public class OkHttpUtils {
     }
 
     private static TrustManager[] buildTrustManagers() {
-        return new TrustManager[]{
+        return new TrustManager[] {
                 new X509TrustManager() {
                     @Override
                     public void checkClientTrusted(X509Certificate[] chain, String authType) {
@@ -471,13 +470,11 @@ public class OkHttpUtils {
 
                     @Override
                     public X509Certificate[] getAcceptedIssuers() {
-                        return new X509Certificate[]{};
+                        return new X509Certificate[] {};
                     }
                 }
         };
     }
-
-
 
     /**
      * 自定义一个接口回调
@@ -492,6 +489,7 @@ public class OkHttpUtils {
 
     /**
      * 获取重定向地址
+     * 
      * @param path 原地址
      * @return
      * @throws Exception
@@ -512,27 +510,29 @@ public class OkHttpUtils {
                 .addHeader("sec-fetch-dest", "empty")
                 .addHeader("sec-fetch-mode", "cors")
                 .addHeader("sec-fetch-site", "same-site")
-                .addHeader("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+                .addHeader("user-agent",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
                 .build();
 
         Response response = client.newCall(request).execute();
-        return  response.request().url().toString();
+        return response.request().url().toString();
 
     }
-//    获取所有缓存的Cookie
+    // 获取所有缓存的Cookie
 
-    public static  HashMap<String, List<Cookie>> getAllCookies() {
-       return cookieStore;
+    public static HashMap<String, List<Cookie>> getAllCookies() {
+        return cookieStore;
     }
-    //根据url获取Cookie
+
+    // 根据url获取Cookie
     public static List<Cookie> getCookies(String url) {
         return cookieStore.get(url);
     }
-    //清空所有缓存
+
+    // 清空所有缓存
     public static void clearCookies() {
         cookieStore.clear();
     }
-
 
     public static OkHttpClient getOkHttpClient() {
         return okHttpClient;
@@ -541,9 +541,10 @@ public class OkHttpUtils {
     public static void setOkHttpClient(OkHttpClient okHttpClient) {
         OkHttpUtils.okHttpClient = okHttpClient;
     }
-    
+
     /**
      * 获取应用程序流量统计
+     * 
      * @deprecated 由于SystemUtils现在只缓存最近数据，建议使用getApplicationSpeed()获取实时速度
      */
     @Deprecated

@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.sqmusicplus.v3.base.entity.DownloadInfo;
 import com.sqmusicplus.v3.base.service.DownloadInfoService;
 import com.sqmusicplus.v3.config.AjaxResult;
+import com.sqmusicplus.v3.download.DownloadProgressCache;
 import com.sqmusicplus.v3.download.DownloadStatus;
 import com.sqmusicplus.v3.download.vo.DownloadInfoSearch;
 import com.sqmusicplus.v3.utils.StringUtils;
@@ -28,35 +29,49 @@ public class TaskController {
     @Autowired
     private DownloadInfoService downloadInfoService;
 
+    @Autowired
+    private DownloadProgressCache downloadProgressCache;
+
     /**
      * 获取任务列表
+     * 
      * @param downloadInfo
      * @return
      */
     @PostMapping("/list")
-    public AjaxResult list(@RequestBody DownloadInfoSearch downloadInfo){
+    public AjaxResult list(@RequestBody DownloadInfoSearch downloadInfo) {
         LambdaQueryWrapper<DownloadInfo> downloadInfoLambdaQueryWrapper = new LambdaQueryWrapper<>();
-        downloadInfoLambdaQueryWrapper.eq(StringUtils.isNotEmpty(downloadInfo.getDownloadStatus()),DownloadInfo::getDownloadStatus, downloadInfo.getDownloadStatus());
-        downloadInfoLambdaQueryWrapper.between(downloadInfo.getDownloadTimeStart()!=null&&downloadInfo.getDownloadTimeEnd()!=null,DownloadInfo::getDownloadTime, downloadInfo.getDownloadTimeStart(), downloadInfo.getDownloadTimeEnd());
-        downloadInfoLambdaQueryWrapper.like(StringUtils.isNotEmpty(downloadInfo.getDownloadMusicname()),DownloadInfo::getDownloadMusicname, downloadInfo.getDownloadMusicname());
-        downloadInfoLambdaQueryWrapper.like(StringUtils.isNotEmpty(downloadInfo.getDownloadArtistname()),DownloadInfo::getDownloadArtistname, downloadInfo.getDownloadArtistname());
-        downloadInfoLambdaQueryWrapper.like(StringUtils.isNotEmpty(downloadInfo.getDownloadAlbumname()),DownloadInfo::getDownloadAlbumname, downloadInfo.getDownloadAlbumname());
-        downloadInfoLambdaQueryWrapper.eq(StringUtils.isNotEmpty(downloadInfo.getDownloadPlugName()),DownloadInfo::getDownloadPlugName, downloadInfo.getDownloadPlugName());
-        downloadInfoLambdaQueryWrapper.eq(downloadInfo.getAudioBook()!=null,DownloadInfo::getAudioBook, downloadInfo.getAudioBook());
+        downloadInfoLambdaQueryWrapper.eq(StringUtils.isNotEmpty(downloadInfo.getDownloadStatus()),
+                DownloadInfo::getDownloadStatus, downloadInfo.getDownloadStatus());
+        downloadInfoLambdaQueryWrapper.between(
+                downloadInfo.getDownloadTimeStart() != null && downloadInfo.getDownloadTimeEnd() != null,
+                DownloadInfo::getDownloadTime, downloadInfo.getDownloadTimeStart(), downloadInfo.getDownloadTimeEnd());
+        downloadInfoLambdaQueryWrapper.like(StringUtils.isNotEmpty(downloadInfo.getDownloadMusicname()),
+                DownloadInfo::getDownloadMusicname, downloadInfo.getDownloadMusicname());
+        downloadInfoLambdaQueryWrapper.like(StringUtils.isNotEmpty(downloadInfo.getDownloadArtistname()),
+                DownloadInfo::getDownloadArtistname, downloadInfo.getDownloadArtistname());
+        downloadInfoLambdaQueryWrapper.like(StringUtils.isNotEmpty(downloadInfo.getDownloadAlbumname()),
+                DownloadInfo::getDownloadAlbumname, downloadInfo.getDownloadAlbumname());
+        downloadInfoLambdaQueryWrapper.eq(StringUtils.isNotEmpty(downloadInfo.getDownloadPlugName()),
+                DownloadInfo::getDownloadPlugName, downloadInfo.getDownloadPlugName());
+        downloadInfoLambdaQueryWrapper.eq(downloadInfo.getAudioBook() != null, DownloadInfo::getAudioBook,
+                downloadInfo.getAudioBook());
         downloadInfoLambdaQueryWrapper.orderByDesc(DownloadInfo::getDownloadTime);
-        Page<DownloadInfo> page = downloadInfoService.page(new Page<>(downloadInfo.getPageIndex(), downloadInfo.getPageSize()),downloadInfoLambdaQueryWrapper);
+        Page<DownloadInfo> page = downloadInfoService.page(
+                new Page<>(downloadInfo.getPageIndex(), downloadInfo.getPageSize()), downloadInfoLambdaQueryWrapper);
         return AjaxResult.success(page);
     }
 
     /**
      * 删除任务
+     * 
      * @param downloadInfo
      * @return
      */
     @PostMapping("/del")
-    public AjaxResult deleteDownloadInfo(@RequestBody DownloadInfo downloadInfo){
+    public AjaxResult deleteDownloadInfo(@RequestBody DownloadInfo downloadInfo) {
         Integer id = downloadInfo.getId();
-        if (id!=null){
+        if (id != null) {
             downloadInfoService.removeById(id);
             return AjaxResult.success();
         }
@@ -66,13 +81,14 @@ public class TaskController {
 
     /**
      * 重新下载任务
+     * 
      * @param downloadInfo
      * @return
      */
     @PostMapping("/refreshTask")
-    public AjaxResult updateDownloadInfo(@RequestBody DownloadInfo downloadInfo){
+    public AjaxResult updateDownloadInfo(@RequestBody DownloadInfo downloadInfo) {
         Integer id = downloadInfo.getId();
-        if (id!=null){
+        if (id != null) {
             DownloadInfo updownloadInfo = new DownloadInfo();
             updownloadInfo.setDownloadStatus(DownloadStatus.waiting.getValue());
             updownloadInfo.setId(id);
@@ -82,14 +98,14 @@ public class TaskController {
         return AjaxResult.error();
     }
 
-
     /**
      * 重新下载错误任务
+     * 
      * @return
      */
     @SaCheckLogin
     @GetMapping("/againTask")
-    public AjaxResult againTask(){
+    public AjaxResult againTask() {
         LambdaUpdateWrapper<DownloadInfo> downloadInfoLambdaUpdateWrapper = new LambdaUpdateWrapper<>();
         downloadInfoLambdaUpdateWrapper.eq(DownloadInfo::getDownloadStatus, DownloadStatus.error.getValue())
                 .set(DownloadInfo::getDownloadStatus, DownloadStatus.waiting.getValue());
@@ -99,11 +115,12 @@ public class TaskController {
 
     /**
      * 刷新正在下载的任务（重新下载正在下载的任务）
+     * 
      * @return
      */
     @SaCheckLogin
     @GetMapping("/refreshTask")
-    public AjaxResult refreshTask(){
+    public AjaxResult refreshTask() {
         LambdaUpdateWrapper<DownloadInfo> downloadInfoLambdaUpdateWrapper = new LambdaUpdateWrapper<>();
         downloadInfoLambdaUpdateWrapper.eq(DownloadInfo::getDownloadStatus, DownloadStatus.loading.getValue())
                 .set(DownloadInfo::getDownloadStatus, DownloadStatus.waiting.getValue());
@@ -111,14 +128,14 @@ public class TaskController {
         return AjaxResult.success();
     }
 
-
     /**
      * 删除所有错误任务
+     * 
      * @return
      */
     @SaCheckLogin
     @GetMapping("/delErrorTask")
-    public AjaxResult delErrorTask(){
+    public AjaxResult delErrorTask() {
         LambdaQueryWrapper<DownloadInfo> downloadInfoLambdaQueryWrapper = new LambdaQueryWrapper<>();
         downloadInfoLambdaQueryWrapper.eq(DownloadInfo::getDownloadStatus, DownloadStatus.error.getValue());
         downloadInfoService.remove(downloadInfoLambdaQueryWrapper);
@@ -127,11 +144,12 @@ public class TaskController {
 
     /**
      * 删除成功任务
+     * 
      * @return
      */
     @SaCheckLogin
     @GetMapping("/delSuccessTask")
-    public AjaxResult delSuccessTask(){
+    public AjaxResult delSuccessTask() {
         LambdaQueryWrapper<DownloadInfo> downloadInfoLambdaQueryWrapper = new LambdaQueryWrapper<>();
         downloadInfoLambdaQueryWrapper.eq(DownloadInfo::getDownloadStatus, DownloadStatus.success.getValue());
         downloadInfoService.remove(downloadInfoLambdaQueryWrapper);
@@ -140,16 +158,24 @@ public class TaskController {
 
     /**
      * 删除正在等待任务
+     * 
      * @return
      */
     @SaCheckLogin
     @GetMapping("/delWaitingTask")
-    public AjaxResult delWaitingTask(){
+    public AjaxResult delWaitingTask() {
         LambdaQueryWrapper<DownloadInfo> downloadInfoLambdaQueryWrapper = new LambdaQueryWrapper<>();
         downloadInfoLambdaQueryWrapper.eq(DownloadInfo::getDownloadStatus, DownloadStatus.waiting.getValue());
         downloadInfoService.remove(downloadInfoLambdaQueryWrapper);
         return AjaxResult.success();
     }
 
+    /**
+     * 实时下载进度（内存缓存，仅 loading 中的任务有数据）
+     */
+    @GetMapping("/taskProgress")
+    public AjaxResult taskProgress() {
+        return AjaxResult.success(downloadProgressCache.getAll());
+    }
 
 }

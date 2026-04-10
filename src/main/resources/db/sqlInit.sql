@@ -11,7 +11,7 @@ CREATE TABLE `download_info` (
                                  `download_musicname` varchar(255) DEFAULT NULL COMMENT '歌曲名称',
                                  `download_artistname` varchar(255) DEFAULT NULL COMMENT '歌手名称',
                                  `download_albumname` varchar(255) DEFAULT NULL COMMENT '专辑名称',
-                                 `download_msg` varchar(255) DEFAULT NULL COMMENT '下载信息错误信息',
+                                 `download_msg` text COMMENT '下载信息错误信息',
                                  `version` varchar(255) DEFAULT NULL COMMENT '不需要',
                                  `download_music_info` longtext COMMENT '下载歌曲详细信息',
                                  `download_status` varchar(255) DEFAULT NULL COMMENT '下载状态',

@@ -1,4 +1,4 @@
-FROM maven:3.9.4-amazoncorretto-17 AS builder
+FROM m.daocloud.io/docker.io/library/maven:3.9.9-eclipse-temurin-17 AS builder
 MAINTAINER SQ
 
 WORKDIR /build/
@@ -8,8 +8,8 @@ COPY src /build/src/
 
 RUN mvn clean package
 
-# 使用支持多架构的OpenJDK镜像
-FROM amazoncorretto:17-alpine3.23-full
+# 使用更稳定、体积更小的 JRE 运行时镜像
+FROM m.daocloud.io/docker.io/library/eclipse-temurin:17-jre-alpine
 
 # 设置工作目录
 WORKDIR /app
