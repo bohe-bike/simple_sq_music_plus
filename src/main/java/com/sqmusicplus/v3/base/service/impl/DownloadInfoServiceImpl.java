@@ -1,6 +1,6 @@
 package com.sqmusicplus.v3.base.service.impl;
 
-
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sqmusicplus.v3.base.entity.DownloadInfo;
 import com.sqmusicplus.v3.base.mapper.DownloadInfoMapper;
 import com.sqmusicplus.v3.base.service.DownloadInfoService;
@@ -15,31 +15,39 @@ import java.util.List;
 import java.util.Set;
 import java.util.HashSet;
 import java.util.ArrayList;
+import java.util.stream.Collectors;
 
 /**
  * <p>
- *  服务实现类
+ * 服务实现类
  * </p>
  *
  * @author sq
  * @since 2023-08-23
  */
 @Service
-public class DownloadInfoServiceImpl extends ServiceImpl<DownloadInfoMapper, DownloadInfo> implements DownloadInfoService {
-
+public class DownloadInfoServiceImpl extends ServiceImpl<DownloadInfoMapper, DownloadInfo>
+        implements DownloadInfoService {
 
     @Autowired
-    private  DownloadInfoServiceImpl downloadInfoService;
-
-
+    private DownloadInfoServiceImpl downloadInfoService;
 
     @Override
     public synchronized Boolean add(DownloadInfo downloadInfo) {
+        // 检查数据库中是否已存在成功下载的记录
+        if (downloadInfo.getDownloadMusicId() != null) {
+            long count = count(new LambdaQueryWrapper<DownloadInfo>()
+                    .eq(DownloadInfo::getDownloadMusicId, downloadInfo.getDownloadMusicId())
+                    .eq(DownloadInfo::getDownloadStatus, DownloadStatus.success.getValue()));
+            if (count > 0) {
+                return true;
+            }
+        }
         // 截断过长的字符串，避免数据库报错
         truncateStringField(downloadInfo);
         downloadInfo.setDownloadStatus(DownloadStatus.waiting.getValue());
         boolean save = downloadInfoService.save(downloadInfo);
-        return  save;
+        return save;
     }
 
     @Override
@@ -47,7 +55,7 @@ public class DownloadInfoServiceImpl extends ServiceImpl<DownloadInfoMapper, Dow
         // 使用 Set 去重，避免重复添加相同歌曲
         Set<String> uniqueMusicIds = new HashSet<>();
         List<DownloadInfo> uniqueDownloadInfo = new ArrayList<>();
-            
+
         for (DownloadInfo info : downloadInfo) {
             // 检查歌曲 ID 是否已存在
             if (!uniqueMusicIds.contains(info.getDownloadMusicId())) {
@@ -58,18 +66,35 @@ public class DownloadInfoServiceImpl extends ServiceImpl<DownloadInfoMapper, Dow
                 uniqueDownloadInfo.add(info);
             }
         }
-            
+
         if (uniqueDownloadInfo.isEmpty()) {
             return true;
         }
-            
+
+        // 查询数据库中已成功下载的歌曲 ID，忽略这些任务
+        List<String> allMusicIds = new ArrayList<>(uniqueMusicIds);
+        Set<String> successMusicIds = list(new LambdaQueryWrapper<DownloadInfo>()
+                .in(DownloadInfo::getDownloadMusicId, allMusicIds)
+                .eq(DownloadInfo::getDownloadStatus, DownloadStatus.success.getValue())
+                .select(DownloadInfo::getDownloadMusicId))
+                .stream().map(DownloadInfo::getDownloadMusicId).collect(Collectors.toSet());
+
+        if (!successMusicIds.isEmpty()) {
+            uniqueDownloadInfo.removeIf(info -> successMusicIds.contains(info.getDownloadMusicId()));
+        }
+
+        if (uniqueDownloadInfo.isEmpty()) {
+            return true;
+        }
+
         boolean save = downloadInfoService.saveBatch(uniqueDownloadInfo);
         return save;
     }
-    
+
     /**
      * 截断 DownloadInfo 中可能过长的字符串字段，防止数据库插入时报错
      * 根据数据库表结构，varchar(255) 的字段最大长度为 255
+     * 
      * @param downloadInfo 需要处理的下载信息对象
      */
     private void truncateStringField(DownloadInfo downloadInfo) {
@@ -89,7 +114,7 @@ public class DownloadInfoServiceImpl extends ServiceImpl<DownloadInfoMapper, Dow
         if (downloadInfo.getDownloadMsg() != null && downloadInfo.getDownloadMsg().length() > 255) {
             downloadInfo.setDownloadMsg(downloadInfo.getDownloadMsg().substring(0, 255));
         }
-            
+
     }
 
     @Override
