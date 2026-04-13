@@ -1,9 +1,9 @@
 param(
-    [string]$Version = "4.0",
+    [string]$Version = "4.1",
     [string]$Registry = "crpi-0ajp4qol6rvhbqjh.cn-shanghai.personal.cr.aliyuncs.com",
     [string]$Namespace = "coco_bike",
-    [string]$BackendRepository = "song-nas",
-    [string]$FrontendRepository = "song-nas-web",
+    [string]$BackendRepository = "simple_sq_music_plus_main",
+    [string]$FrontendRepository = "simple_sq_music_plus_web",
     [string]$Username = "444503829@qq.com",
     [string]$BackendImage = "sqmusic_main:local",
     [string]$FrontendImage = "sqmusic_web:local",
@@ -56,7 +56,7 @@ function Push-ImageWithTags {
     )
 
     foreach ($tag in $Tags) {
-        $targetImage = "$registryHost/$Namespace/$TargetRepository:$tag"
+        $targetImage = "${registryHost}/${Namespace}/${TargetRepository}:${tag}"
         Write-Host "打标镜像: $SourceImage -> $targetImage"
         docker tag $SourceImage $targetImage
 
@@ -71,6 +71,15 @@ if ($UseVpc) {
 }
 
 $publishTags = @($Version, "latest")
+$WebBuildContext = "G:\Projects\simple_sq_music_plus_web\vue"
+
+Write-Host "构建后端镜像: $BackendImage"
+docker build -t $BackendImage -f (Join-Path $PSScriptRoot "..\Dockerfile") (Join-Path $PSScriptRoot "..")
+if ($LASTEXITCODE -ne 0) { throw "后端镜像构建失败" }
+
+Write-Host "构建前端镜像: $FrontendImage (来源: $WebBuildContext)"
+docker build -t $FrontendImage $WebBuildContext
+if ($LASTEXITCODE -ne 0) { throw "前端镜像构建失败" }
 
 Write-Host "检查本地镜像..."
 Require-Image -ImageName $BackendImage
@@ -86,7 +95,7 @@ Write-Host "推送前端镜像..."
 Push-ImageWithTags -SourceImage $FrontendImage -TargetRepository $FrontendRepository -Tags $publishTags
 
 Write-Host "推送完成。"
-Write-Host "后端镜像: $registryHost/$Namespace/$BackendRepository:$Version"
-Write-Host "后端镜像: $registryHost/$Namespace/$BackendRepository:latest"
-Write-Host "前端镜像: $registryHost/$Namespace/$FrontendRepository:$Version"
-Write-Host "前端镜像: $registryHost/$Namespace/$FrontendRepository:latest"
+Write-Host "后端镜像: ${registryHost}/${Namespace}/${BackendRepository}:${Version}"
+Write-Host "后端镜像: ${registryHost}/${Namespace}/${BackendRepository}:latest"
+Write-Host "前端镜像: ${registryHost}/${Namespace}/${FrontendRepository}:${Version}"
+Write-Host "前端镜像: ${registryHost}/${Namespace}/${FrontendRepository}:latest"

@@ -51,7 +51,7 @@ emby,jellyfin识别请参考如下配置 https://support.emby.media/support/solu
 
 前端项目已迁移到独立目录，本仓库的本地开发编排默认使用外部前端工程进行构建。
 
-- 当前本地 compose 前端构建目录：G:/Projects/simple_sq_music_plus_web
+- 当前本地 compose 前端构建目录：G:\Projects\simple_sq_music_plus_web\vue
 - 本地执行 docker compose -f docker-compose.local.yml up -d --build 前，请确认该目录存在且可正常构建
 
 #### 2.docker启动请参考docker-compose配置手动启动

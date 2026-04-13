@@ -24,7 +24,7 @@ services:
 
   sqmusic_web:
     build:
-      context: G:/Projects/simple_sq_music_plus_web
+      context: G:\Projects\simple_sq_music_plus_web\vue
       dockerfile: Dockerfile
     image: sqmusic_web:local
     container_name: sqmusic_web
