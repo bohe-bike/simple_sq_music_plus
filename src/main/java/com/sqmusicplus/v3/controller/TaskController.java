@@ -171,6 +171,16 @@ public class TaskController {
     }
 
     /**
+     * 清除重复任务记录（相同歌曲+来源+状态的多条记录，保留 id 最大的一条，不删除源文件）
+     */
+    @SaCheckLogin
+    @GetMapping("/delDuplicate")
+    public AjaxResult delDuplicate() {
+        int deleted = downloadInfoService.getBaseMapper().deleteDuplicates();
+        return AjaxResult.success(deleted);
+    }
+
+    /**
      * 实时下载进度（内存缓存，仅 loading 中的任务有数据）
      */
     @GetMapping("/taskProgress")

@@ -7,6 +7,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -72,15 +73,38 @@ public class ParseJobCache {
         ParseJobStatus s = jobMap.get(jobId);
         if (s == null)
             return;
-        int total = songs.size();
+        // 按 plugName+id 去重，过滤平台 API 分页重叠或歌单内重复收录的曲目
+        List<Music> deduped = deduplicateSongs(songs);
+        int total = deduped.size();
         s.setPhase("done");
         s.setCurrent(total);
         s.setTotal(total);
-        s.setRawSongs(songs);
-        s.setSongs(toPreviewSongs(songs));
+        s.setRawSongs(deduped);
+        s.setSongs(toPreviewSongs(deduped));
         s.setMessage("解析完成，共 " + total + " 首");
         touch(s);
         s.setFinishedAt(System.currentTimeMillis());
+    }
+
+    private List<Music> deduplicateSongs(List<Music> songs) {
+        LinkedHashSet<String> seen = new LinkedHashSet<>();
+        List<Music> result = new ArrayList<>();
+        for (Music song : songs) {
+            String id = song.getId();
+            String key = (song.getPlugName() != null ? song.getPlugName() : "") + ":" + (id != null ? id : "");
+            // id 为空时按歌曲名+歌手去重，避免丢弃正常曲目
+            if (id == null || id.isEmpty()) {
+                String name = song.getMusicName() != null ? song.getMusicName() : "";
+                String artist = song.getMusicArtists() != null && !song.getMusicArtists().isEmpty()
+                        ? song.getMusicArtists().get(0)
+                        : "";
+                key = name + "|" + artist;
+            }
+            if (seen.add(key)) {
+                result.add(song);
+            }
+        }
+        return result;
     }
 
     private List<Music> toPreviewSongs(List<Music> songs) {
@@ -132,10 +156,10 @@ public class ParseJobCache {
         return s.getRawSongs();
     }
 
-    /** 定时清理超过 10 分钟的已完成/失败任务 */
+    /** 定时清理超过 60 分钟的已完成/失败任务 */
     @Scheduled(fixedDelay = 120_000)
     public void cleanup() {
-        long cutoff = System.currentTimeMillis() - 10 * 60_000L;
+        long cutoff = System.currentTimeMillis() - 60 * 60_000L;
         jobMap.entrySet().removeIf(e -> {
             ParseJobStatus s = e.getValue();
             return s.getFinishedAt() > 0 && s.getFinishedAt() < cutoff;

@@ -34,11 +34,14 @@ public class DownloadInfoServiceImpl extends ServiceImpl<DownloadInfoMapper, Dow
 
     @Override
     public synchronized Boolean add(DownloadInfo downloadInfo) {
-        // 检查数据库中是否已存在成功下载的记录
+        // 已存在 waiting/loading/success 的同 musicId 记录则跳过；error 状态允许重新入库
         if (downloadInfo.getDownloadMusicId() != null) {
             long count = count(new LambdaQueryWrapper<DownloadInfo>()
                     .eq(DownloadInfo::getDownloadMusicId, downloadInfo.getDownloadMusicId())
-                    .eq(DownloadInfo::getDownloadStatus, DownloadStatus.success.getValue()));
+                    .in(DownloadInfo::getDownloadStatus,
+                            DownloadStatus.success.getValue(),
+                            DownloadStatus.waiting.getValue(),
+                            DownloadStatus.loading.getValue()));
             if (count > 0) {
                 return true;
             }
@@ -71,16 +74,19 @@ public class DownloadInfoServiceImpl extends ServiceImpl<DownloadInfoMapper, Dow
             return true;
         }
 
-        // 查询数据库中已成功下载的歌曲 ID，忽略这些任务
+        // 查询数据库中已存在 waiting/loading/success 的歌曲 ID，忽略这些任务（error 允许重新入库）
         List<String> allMusicIds = new ArrayList<>(uniqueMusicIds);
-        Set<String> successMusicIds = list(new LambdaQueryWrapper<DownloadInfo>()
+        Set<String> existingMusicIds = list(new LambdaQueryWrapper<DownloadInfo>()
                 .in(DownloadInfo::getDownloadMusicId, allMusicIds)
-                .eq(DownloadInfo::getDownloadStatus, DownloadStatus.success.getValue())
+                .in(DownloadInfo::getDownloadStatus,
+                        DownloadStatus.success.getValue(),
+                        DownloadStatus.waiting.getValue(),
+                        DownloadStatus.loading.getValue())
                 .select(DownloadInfo::getDownloadMusicId))
                 .stream().map(DownloadInfo::getDownloadMusicId).collect(Collectors.toSet());
 
-        if (!successMusicIds.isEmpty()) {
-            uniqueDownloadInfo.removeIf(info -> successMusicIds.contains(info.getDownloadMusicId()));
+        if (!existingMusicIds.isEmpty()) {
+            uniqueDownloadInfo.removeIf(info -> existingMusicIds.contains(info.getDownloadMusicId()));
         }
 
         if (uniqueDownloadInfo.isEmpty()) {
