@@ -18,7 +18,6 @@ import java.util.List;
 @Data
 public class PlaylistTrackAllResult {
 
-
     @JsonProperty("songs")
     private List<SongsDTO> songs;
     @JsonProperty("privileges")
@@ -322,8 +321,6 @@ public class PlaylistTrackAllResult {
         }
     }
 
-
-
     @NoArgsConstructor
     @Data
     public static class playlist {
@@ -337,5 +334,14 @@ public class PlaylistTrackAllResult {
         private Long trackCount;
         @JsonProperty("description")
         private String description;
+        @JsonProperty("trackIds")
+        private List<TrackIdDTO> trackIds;
+
+        @NoArgsConstructor
+        @Data
+        public static class TrackIdDTO {
+            @JsonProperty("id")
+            private Long id;
+        }
     }
 }
