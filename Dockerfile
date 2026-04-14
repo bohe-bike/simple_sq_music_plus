@@ -1,12 +1,17 @@
 FROM m.daocloud.io/docker.io/library/maven:3.9.9-eclipse-temurin-17 AS builder
-MAINTAINER SQ
+LABEL maintainer="SQ"
 
 WORKDIR /build/
 
-COPY pom.xml /build/
-COPY src /build/src/
+# 配置阿里云 Maven 镜像，加速国内依赖下载
+COPY settings.xml /root/.m2/settings.xml
 
-RUN mvn clean package
+# 单独复制 pom.xml，先下载依赖（利用 Docker 层缓存）
+COPY pom.xml /build/
+RUN mvn dependency:go-offline -B
+
+COPY src /build/src/
+RUN mvn clean package -B
 
 # 使用更稳定、体积更小的 JRE 运行时镜像
 FROM m.daocloud.io/docker.io/library/eclipse-temurin:17-jre-alpine
