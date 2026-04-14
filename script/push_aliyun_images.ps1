@@ -1,5 +1,6 @@
 param(
-    [string]$Version = "4.1",
+    [string]$Version = "",
+    [string]$FrontendVersion = "",
     [string]$Registry = "crpi-0ajp4qol6rvhbqjh.cn-shanghai.personal.cr.aliyuncs.com",
     [string]$Namespace = "coco_bike",
     [string]$BackendRepository = "simple_sq_music_plus_main",
@@ -11,6 +12,22 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+$WebBuildContext = "G:\Projects\simple_sq_music_plus_web\vue"
+
+# 若未指定后端版本，自动从 pom.xml 读取
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    [xml]$pom = Get-Content (Join-Path $PSScriptRoot "..\pom.xml")
+    $Version = $pom.project.version
+    Write-Host "从 pom.xml 读取后端版本: $Version"
+}
+
+# 若未指定前端版本，自动从 package.json 读取
+if ([string]::IsNullOrWhiteSpace($FrontendVersion)) {
+    $packageJson = Get-Content (Join-Path $WebBuildContext "package.json") -Raw | ConvertFrom-Json
+    $FrontendVersion = $packageJson.version
+    Write-Host "从 package.json 读取前端版本: $FrontendVersion"
+}
 
 function Require-Image {
     param(
@@ -71,7 +88,6 @@ if ($UseVpc) {
 }
 
 $publishTags = @($Version, "latest")
-$WebBuildContext = "G:\Projects\simple_sq_music_plus_web\vue"
 
 Write-Host "构建后端镜像: $BackendImage"
 docker build -t $BackendImage -f (Join-Path $PSScriptRoot "..\Dockerfile") (Join-Path $PSScriptRoot "..")
@@ -92,7 +108,8 @@ Write-Host "推送后端镜像..."
 Push-ImageWithTags -SourceImage $BackendImage -TargetRepository $BackendRepository -Tags $publishTags
 
 Write-Host "推送前端镜像..."
-Push-ImageWithTags -SourceImage $FrontendImage -TargetRepository $FrontendRepository -Tags $publishTags
+$frontendPublishTags = @($FrontendVersion, "latest")
+Push-ImageWithTags -SourceImage $FrontendImage -TargetRepository $FrontendRepository -Tags $frontendPublishTags
 
 Write-Host "推送完成。"
 Write-Host "后端镜像: ${registryHost}/${Namespace}/${BackendRepository}:${Version}"
