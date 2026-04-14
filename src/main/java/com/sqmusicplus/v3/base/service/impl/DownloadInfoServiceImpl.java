@@ -128,4 +128,9 @@ public class DownloadInfoServiceImpl extends ServiceImpl<DownloadInfoMapper, Dow
         entity.setDownloadUpdateTime(DateUtils.getNowDate());
         return super.updateById(entity);
     }
+
+    @Override
+    public int deleteDuplicates() {
+        return ((com.sqmusicplus.v3.base.mapper.DownloadInfoMapper) getBaseMapper()).deleteDuplicates();
+    }
 }

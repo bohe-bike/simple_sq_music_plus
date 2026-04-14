@@ -176,7 +176,7 @@ public class TaskController {
     @SaCheckLogin
     @GetMapping("/delDuplicate")
     public AjaxResult delDuplicate() {
-        int deleted = downloadInfoService.getBaseMapper().deleteDuplicates();
+        int deleted = downloadInfoService.deleteDuplicates();
         return AjaxResult.success(deleted);
     }
 
