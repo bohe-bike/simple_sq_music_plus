@@ -644,10 +644,10 @@ public class NeteaseHander extends SearchHanderAbstract {
 
         ArrayList<Music> musics = new ArrayList<>();
 
-        int limit = 50;
-        // 使用 trackCount 计算需要请求的总次数
-        int totalRequests = trackCount != null ? (int) Math.ceil((double) trackCount / limit) : 1;
+        int limit = 500;
         int totalTracks = trackCount != null ? trackCount.intValue() : 0;
+        // 以实际返回为准，拿到空页即停止，避免因 API 限制导致空转
+        int maxRequests = trackCount != null ? (int) Math.ceil((double) trackCount / limit) + 1 : 100;
 
         JSONObject parameter = new JSONObject();// 请求参数
         parameter.put("id", playlistId);
@@ -655,18 +655,22 @@ public class NeteaseHander extends SearchHanderAbstract {
 
         List<PlaylistTrackAllResult.SongsDTO> songs = new ArrayList<>();
 
-        // 根据计算的次数循环获取所有歌曲
-        for (int page = 0; page < totalRequests; page++) {
+        for (int page = 0; page < maxRequests; page++) {
             reportProgress(progressListener, "fetching", Math.min(page * limit, totalTracks), totalTracks,
-                    "正在抓取网易云歌单页 " + (page + 1) + " / " + totalRequests);
+                    "正在抓取网易云歌单，已获取 " + songs.size() + " / " + totalTracks + " 首…");
             parameter.put("offset", page * limit);
             JSONObject jsonObject = neteaseCloudMusicInfo.playlistTrackAll(parameter);
             PlaylistTrackAllResult playlistTrackAllResult = jsonObject.toJavaObject(PlaylistTrackAllResult.class);
             List<PlaylistTrackAllResult.SongsDTO> songsPage = playlistTrackAllResult.getSongs();
-            if (songsPage != null && !songsPage.isEmpty()) {
-                songs.addAll(songsPage);
-                reportProgress(progressListener, "fetching", Math.min(songs.size(), totalTracks), totalTracks,
-                        "正在抓取网易云歌单页 " + (page + 1) + " / " + totalRequests);
+            if (songsPage == null || songsPage.isEmpty()) {
+                log.info("网易云歌单 {} 第 {} 页返回空，停止抓取，共获取 {} / {} 首", playlistId, page + 1, songs.size(), totalTracks);
+                break;
+            }
+            songs.addAll(songsPage);
+            reportProgress(progressListener, "fetching", Math.min(songs.size(), totalTracks), totalTracks,
+                    "正在抓取网易云歌单，已获取 " + songs.size() + " / " + totalTracks + " 首…");
+            if (songs.size() >= totalTracks) {
+                break;
             }
         }
         reportProgress(progressListener, "resolving", 0, songs.size(), "正在整理网易云歌曲信息…0 / " + songs.size());
