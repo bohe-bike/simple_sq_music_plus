@@ -1,4 +1,4 @@
-FROM m.daocloud.io/docker.io/library/maven:3.9.9-eclipse-temurin-17 AS builder
+FROM maven:3.9.9-eclipse-temurin-17 AS builder
 LABEL maintainer="SQ"
 
 WORKDIR /build/
@@ -14,7 +14,7 @@ COPY src /build/src/
 RUN mvn clean package -B
 
 # 使用更稳定、体积更小的 JRE 运行时镜像
-FROM m.daocloud.io/docker.io/library/eclipse-temurin:17-jre-alpine
+FROM amazoncorretto:17-alpine
 
 # 设置工作目录
 WORKDIR /app

@@ -21,7 +21,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -642,36 +644,154 @@ public class NeteaseHander extends SearchHanderAbstract {
         PlaylistTrackAllResult PlaylistResult = jsonObject1.toJavaObject(PlaylistTrackAllResult.class);
         Long trackCount = PlaylistResult.getPlaylist().getTrackCount();
 
+        // 直接从原始 JSONObject 提取 trackIds，避免 @JsonProperty(Jackson) 与
+        // FastJSON2.toJavaObject() 不兼容问题
+        List<Long> allTrackIds = new ArrayList<>();
+        JSONObject rawPlaylistObj = jsonObject1.getJSONObject("playlist");
+        if (rawPlaylistObj != null) {
+            com.alibaba.fastjson2.JSONArray rawTrackIds = rawPlaylistObj.getJSONArray("trackIds");
+            if (rawTrackIds != null) {
+                log.info("网易云歌单 {} playlistDetail 返回了 trackIds，大小: {}", playlistId, rawTrackIds.size());
+                for (int i = 0; i < rawTrackIds.size(); i++) {
+                    JSONObject tidObj = rawTrackIds.getJSONObject(i);
+                    if (tidObj != null) {
+                        Long tid = tidObj.getLong("id");
+                        if (tid != null)
+                            allTrackIds.add(tid);
+                    }
+                }
+            } else {
+                // trackIds 字段不存在，输出 playlist 对象的所有键
+                log.warn("网易云歌单 {} playlistDetail 不包含 trackIds 字段，返回的 playlist 键：{}", playlistId,
+                        rawPlaylistObj.keySet());
+            }
+        }
+        log.info("网易云歌单 {} 从 playlistDetail 原始JSON提取到 trackIds 数量: {}", playlistId, allTrackIds.size());
+
         ArrayList<Music> musics = new ArrayList<>();
         int totalTracks = trackCount != null ? trackCount.intValue() : 0;
 
-        // 当歌单超过 1000 首时，/playlist/track/all 接口有硬限制，改用 trackIds + /song/detail 批量拉取
-        List<PlaylistTrackAllResult.playlist.TrackIdDTO> trackIds = PlaylistResult.getPlaylist().getTrackIds();
-        if (totalTracks > 1000 && trackIds != null && !trackIds.isEmpty()) {
-            log.info("网易云歌单 {} 共 {} 首，超过1000首限制，改用 trackIds+songDetail 方式拉取", playlistId, totalTracks);
+        // Phase 1: /playlist/track/all 分页拉取（最多返回 1000 首）
+        int limit = 500;
+        int maxRequests = trackCount != null ? (int) Math.ceil((double) trackCount / limit) + 1 : 100;
+
+        JSONObject parameter = new JSONObject();
+        parameter.put("id", playlistId);
+        parameter.put("limit", limit);
+
+        List<PlaylistTrackAllResult.SongsDTO> songs = new ArrayList<>();
+
+        for (int page = 0; page < maxRequests; page++) {
+            reportProgress(progressListener, "fetching", Math.min(page * limit, totalTracks), totalTracks,
+                    "正在抓取网易云歌单，已获取 " + songs.size() + " / " + totalTracks + " 首…");
+            parameter.put("offset", page * limit);
+            JSONObject jsonObject = neteaseCloudMusicInfo.playlistTrackAll(parameter);
+            PlaylistTrackAllResult playlistTrackAllResult = jsonObject.toJavaObject(PlaylistTrackAllResult.class);
+            List<PlaylistTrackAllResult.SongsDTO> songsPage = playlistTrackAllResult.getSongs();
+            if (songsPage == null || songsPage.isEmpty()) {
+                log.info("网易云歌单 {} 第 {} 页返回空，停止抓取，Phase1 共获取 {} / {} 首", playlistId, page + 1, songs.size(),
+                        totalTracks);
+                break;
+            }
+            songs.addAll(songsPage);
+            reportProgress(progressListener, "fetching", Math.min(songs.size(), totalTracks), totalTracks,
+                    "正在抓取网易云歌单，已获取 " + songs.size() + " / " + totalTracks + " 首…");
+            if (songs.size() >= totalTracks) {
+                break;
+            }
+        }
+
+        // Phase 2: 当 Phase1 未拉满所有歌曲时，通过 trackIds + /song/detail 补齐剩余部分
+        // OkHttp 对同一 URL 的 POST 响应存在磁盘缓存，因此只在 Phase1 已确认不足时才调用少量批次
+        if (totalTracks > songs.size() && !allTrackIds.isEmpty()) {
+            log.info("网易云歌单 {} Phase1 获得 {} 首，期望 {} 首，启动 Phase2 补齐剩余", playlistId, songs.size(), totalTracks);
+            // 收集 Phase1 已获得的 ID，避免重复
+            Set<Long> phase1Ids = new HashSet<>();
+            for (PlaylistTrackAllResult.SongsDTO s : songs) {
+                if (s.getId() != null)
+                    phase1Ids.add(s.getId());
+            }
+            // 只取 Phase1 未获得的 ID
+            List<Long> remainingIds = allTrackIds.stream()
+                    .filter(id -> !phase1Ids.contains(id))
+                    .collect(Collectors.toList());
+            log.info("网易云歌单 {} Phase2 需补齐 {} 首", playlistId, remainingIds.size());
             int batchSize = 500;
-            List<MusicInfoNeteaseResult.SongsDTO> allSongDetails = new ArrayList<>();
-            int totalBatches = (int) Math.ceil((double) trackIds.size() / batchSize);
-            for (int batch = 0; batch < totalBatches; batch++) {
-                int from = batch * batchSize;
-                int to = Math.min(from + batchSize, trackIds.size());
-                String ids = trackIds.subList(from, to).stream()
-                        .map(t -> t.getId().toString())
+            List<MusicInfoNeteaseResult.SongsDTO> extraSongs = new ArrayList<>();
+            for (int i = 0; i < remainingIds.size(); i += batchSize) {
+                int to = Math.min(i + batchSize, remainingIds.size());
+                String ids = remainingIds.subList(i, to).stream()
+                        .map(Object::toString)
                         .collect(Collectors.joining(","));
-                reportProgress(progressListener, "fetching", from, totalTracks,
-                        "正在抓取网易云歌单，已获取 " + from + " / " + totalTracks + " 首…");
+                reportProgress(progressListener, "fetching", songs.size() + i, totalTracks,
+                        "正在补齐网易云歌单，已获取 " + (songs.size() + i) + " / " + totalTracks + " 首…");
                 JSONObject param = new JSONObject();
                 param.put("ids", ids);
+                // 追加 timestamp 参数，使每次请求 body 不同，绕过 OkHttp POST 响应缓存
+                param.put("timestamp", System.currentTimeMillis());
                 JSONObject result = neteaseCloudMusicInfo.songDetail(param);
+                if (result == null) {
+                    log.warn("网易云歌单 {} Phase2 第 {} 批次 songDetail 返回 null", playlistId, i / batchSize);
+                    continue;
+                }
                 MusicInfoNeteaseResult songDetailResult = result.toJavaObject(MusicInfoNeteaseResult.class);
-                if (songDetailResult != null && songDetailResult.getSongs() != null) {
-                    allSongDetails.addAll(songDetailResult.getSongs());
+                int got = songDetailResult != null && songDetailResult.getSongs() != null
+                        ? songDetailResult.getSongs().size()
+                        : 0;
+                log.info("网易云歌单 {} Phase2 第 {} 批次 songDetail 请求 {} 首，返回 {} 首", playlistId, i / batchSize, to - i, got);
+                if (got > 0) {
+                    extraSongs.addAll(songDetailResult.getSongs());
                 }
             }
-            reportProgress(progressListener, "resolving", 0, allSongDetails.size(),
-                    "正在整理网易云歌曲信息…0 / " + allSongDetails.size());
-            for (int index = 0; index < allSongDetails.size(); index++) {
-                MusicInfoNeteaseResult.SongsDTO songsDTO = allSongDetails.get(index);
+            // 把 Phase2 结果转成 Music 并加入 musics（在 Phase1 的 songs 循环之后处理）
+            // 先存起来，循环结束后追加
+            // 此处用局部变量传递给后续逻辑（在 songs 循环后 return 前追加）
+            List<MusicInfoNeteaseResult.SongsDTO> phase2Songs = extraSongs;
+            // 注意：phase2Songs 的处理在下方 songs 循环之后
+            // 先处理 Phase1 的 songs
+            reportProgress(progressListener, "resolving", 0, totalTracks, "正在整理网易云歌曲信息…0 / " + totalTracks);
+            for (int index = 0; index < songs.size(); index++) {
+                PlaylistTrackAllResult.SongsDTO songsInfoDTO = songs.get(index);
+                PlaylistTrackAllResult.SongsDTO.HDTO h = songsInfoDTO.getH();
+                PlaylistTrackAllResult.SongsDTO.MDTO m = songsInfoDTO.getM();
+                PlaylistTrackAllResult.SongsDTO.LDTO l = songsInfoDTO.getL();
+                PlaylistTrackAllResult.SongsDTO.SqDTO sq = songsInfoDTO.getSq();
+                PlaylistTrackAllResult.SongsDTO.SqDTO hr = songsInfoDTO.getHr();
+                ArrayList<PlugBrType> plugBrTypes = new ArrayList<>();
+                if (h != null && h.getBr() != null)
+                    plugBrTypes.add(PlugBrType.NETEASE_MP3_320);
+                if (m != null && m.getBr() != null)
+                    plugBrTypes.add(PlugBrType.NETEASE_MP3_192);
+                if (l != null && l.getBr() != null)
+                    plugBrTypes.add(PlugBrType.NETEASE_MP3_128);
+                if (sq != null && sq.getBr() != null)
+                    plugBrTypes.add(PlugBrType.NETEASE_FLAC_2000);
+                if (hr != null && hr.getBr() != null)
+                    plugBrTypes.add(PlugBrType.NETEASE_FLAC_3000);
+                Music music = new Music();
+                music.setId(songsInfoDTO.getId().toString())
+                        .setMusicName(songsInfoDTO.getName())
+                        .setMusicDuration(songsInfoDTO.getDt())
+                        .setMusicAlbum(songsInfoDTO.getAl().getName())
+                        .setMusicArtists(
+                                songsInfoDTO.getAr().stream().map(e -> e.getName()).collect(Collectors.toList()))
+                        .setMusicImage(songsInfoDTO.getAl().getPicUrl())
+                        .setAlbumId(songsInfoDTO.getAl().getId().toString())
+                        .setPlugName(getPlugName())
+                        .setDataInfo(JSONObject.parseObject(JSONObject.toJSONString(songsInfoDTO)))
+                        .setArtistsIds(
+                                songsInfoDTO.getAr().stream().map(e -> e.getId().toString())
+                                        .collect(Collectors.toList()))
+                        .setBits(plugBrTypes);
+                musics.add(music);
+                if ((index + 1) == songs.size() || (index + 1) % 25 == 0) {
+                    reportProgress(progressListener, "resolving", index + 1, totalTracks,
+                            "正在整理网易云歌曲信息…" + musics.size() + " / " + totalTracks);
+                }
+            }
+            // Phase2 结果转换
+            for (int index = 0; index < phase2Songs.size(); index++) {
+                MusicInfoNeteaseResult.SongsDTO songsDTO = phase2Songs.get(index);
                 ArrayList<PlugBrType> plugBrTypes = new ArrayList<>();
                 if (songsDTO.getH() != null && songsDTO.getH().getBr() != null)
                     plugBrTypes.add(PlugBrType.NETEASE_MP3_320);
@@ -697,41 +817,12 @@ public class NeteaseHander extends SearchHanderAbstract {
                                 songsDTO.getAr().stream().map(e -> e.getId().toString()).collect(Collectors.toList()))
                         .setBits(plugBrTypes);
                 musics.add(music);
-                if ((index + 1) == allSongDetails.size() || (index + 1) % 25 == 0) {
-                    reportProgress(progressListener, "resolving", index + 1, allSongDetails.size(),
-                            "正在整理网易云歌曲信息…" + (index + 1) + " / " + allSongDetails.size());
+                if ((index + 1) == phase2Songs.size() || (index + 1) % 25 == 0) {
+                    reportProgress(progressListener, "resolving", musics.size(), totalTracks,
+                            "正在整理网易云歌曲信息…" + musics.size() + " / " + totalTracks);
                 }
             }
             return musics;
-        }
-
-        // 1000首以内走原有 /playlist/track/all 分页逻辑
-        int limit = 500;
-        int maxRequests = trackCount != null ? (int) Math.ceil((double) trackCount / limit) + 1 : 100;
-
-        JSONObject parameter = new JSONObject();
-        parameter.put("id", playlistId);
-        parameter.put("limit", limit);
-
-        List<PlaylistTrackAllResult.SongsDTO> songs = new ArrayList<>();
-
-        for (int page = 0; page < maxRequests; page++) {
-            reportProgress(progressListener, "fetching", Math.min(page * limit, totalTracks), totalTracks,
-                    "正在抓取网易云歌单，已获取 " + songs.size() + " / " + totalTracks + " 首…");
-            parameter.put("offset", page * limit);
-            JSONObject jsonObject = neteaseCloudMusicInfo.playlistTrackAll(parameter);
-            PlaylistTrackAllResult playlistTrackAllResult = jsonObject.toJavaObject(PlaylistTrackAllResult.class);
-            List<PlaylistTrackAllResult.SongsDTO> songsPage = playlistTrackAllResult.getSongs();
-            if (songsPage == null || songsPage.isEmpty()) {
-                log.info("网易云歌单 {} 第 {} 页返回空，停止抓取，共获取 {} / {} 首", playlistId, page + 1, songs.size(), totalTracks);
-                break;
-            }
-            songs.addAll(songsPage);
-            reportProgress(progressListener, "fetching", Math.min(songs.size(), totalTracks), totalTracks,
-                    "正在抓取网易云歌单，已获取 " + songs.size() + " / " + totalTracks + " 首…");
-            if (songs.size() >= totalTracks) {
-                break;
-            }
         }
         reportProgress(progressListener, "resolving", 0, songs.size(), "正在整理网易云歌曲信息…0 / " + songs.size());
         for (int index = 0; index < songs.size(); index++) {
