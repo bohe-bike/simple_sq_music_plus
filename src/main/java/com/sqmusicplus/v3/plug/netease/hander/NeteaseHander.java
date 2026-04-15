@@ -641,17 +641,19 @@ public class NeteaseHander extends SearchHanderAbstract {
         reportProgress(progressListener, "fetching", 0, 0, "正在获取网易云歌单信息…");
 
         JSONObject jsonObject1 = neteaseCloudMusicInfo.playlistDetail(playlistDetailParameter);
-        PlaylistTrackAllResult PlaylistResult = jsonObject1.toJavaObject(PlaylistTrackAllResult.class);
-        Long trackCount = PlaylistResult.getPlaylist().getTrackCount();
 
-        // 直接从原始 JSONObject 提取 trackIds，避免 @JsonProperty(Jackson) 与
-        // FastJSON2.toJavaObject() 不兼容问题
+        // 直接从原始 JSONObject 提取，避免 @JsonProperty(Jackson) 与 FastJSON2.toJavaObject()
+        // 不兼容问题
         List<Long> allTrackIds = new ArrayList<>();
+        int totalTracks = 0;
         JSONObject rawPlaylistObj = jsonObject1.getJSONObject("playlist");
         if (rawPlaylistObj != null) {
+            // 提取 trackCount
+            Long rawTrackCount = rawPlaylistObj.getLong("trackCount");
+            totalTracks = rawTrackCount != null ? rawTrackCount.intValue() : 0;
+            // 提取 trackIds
             com.alibaba.fastjson2.JSONArray rawTrackIds = rawPlaylistObj.getJSONArray("trackIds");
             if (rawTrackIds != null) {
-                log.info("网易云歌单 {} playlistDetail 返回了 trackIds，大小: {}", playlistId, rawTrackIds.size());
                 for (int i = 0; i < rawTrackIds.size(); i++) {
                     JSONObject tidObj = rawTrackIds.getJSONObject(i);
                     if (tidObj != null) {
@@ -660,20 +662,16 @@ public class NeteaseHander extends SearchHanderAbstract {
                             allTrackIds.add(tid);
                     }
                 }
-            } else {
-                // trackIds 字段不存在，输出 playlist 对象的所有键
-                log.warn("网易云歌单 {} playlistDetail 不包含 trackIds 字段，返回的 playlist 键：{}", playlistId,
-                        rawPlaylistObj.keySet());
             }
         }
-        log.info("网易云歌单 {} 从 playlistDetail 原始JSON提取到 trackIds 数量: {}", playlistId, allTrackIds.size());
+        log.info("网易云歌单 {} 从 playlistDetail 原始JSON提取到 trackCount={}, trackIds数量={}",
+                playlistId, totalTracks, allTrackIds.size());
 
         ArrayList<Music> musics = new ArrayList<>();
-        int totalTracks = trackCount != null ? trackCount.intValue() : 0;
 
         // Phase 1: /playlist/track/all 分页拉取（最多返回 1000 首）
         int limit = 500;
-        int maxRequests = trackCount != null ? (int) Math.ceil((double) trackCount / limit) + 1 : 100;
+        int maxRequests = totalTracks > 0 ? (int) Math.ceil((double) totalTracks / limit) + 1 : 100;
 
         JSONObject parameter = new JSONObject();
         parameter.put("id", playlistId);
