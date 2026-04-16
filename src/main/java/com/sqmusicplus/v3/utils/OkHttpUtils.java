@@ -79,7 +79,7 @@ public class OkHttpUtils {
                     okHttpClient = new OkHttpClient.Builder()
                             .connectTimeout(15, TimeUnit.SECONDS)
                             .writeTimeout(30, TimeUnit.SECONDS)
-                            .readTimeout(60, TimeUnit.SECONDS)
+                            .readTimeout(30, TimeUnit.SECONDS)
                             .sslSocketFactory(createSSLSocketFactory(trustManagers),
                                     (X509TrustManager) trustManagers[0])
                             .hostnameVerifier((hostName, session) -> true)
