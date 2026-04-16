@@ -677,41 +677,54 @@ public class NeteaseHander extends SearchHanderAbstract {
         parameter.put("id", playlistId);
         parameter.put("limit", limit);
 
+        // 用 LinkedHashSet 跟踪已获取的唯一歌曲 ID，防止 Netease API offset>1000 时返回重复数据虚增计数
+        Set<Long> phase1SeenIds = new LinkedHashSet<>();
         List<PlaylistTrackAllResult.SongsDTO> songs = new ArrayList<>();
 
         for (int page = 0; page < maxRequests; page++) {
-            reportProgress(progressListener, "fetching", Math.min(page * limit, totalTracks), totalTracks,
-                    "正在抓取网易云歌单，已获取 " + songs.size() + " / " + totalTracks + " 首…");
+            reportProgress(progressListener, "fetching", Math.min(phase1SeenIds.size(), totalTracks), totalTracks,
+                    "正在抓取网易云歌单，已获取 " + phase1SeenIds.size() + " / " + totalTracks + " 首…");
             parameter.put("offset", page * limit);
             JSONObject jsonObject = neteaseCloudMusicInfo.playlistTrackAll(parameter);
             PlaylistTrackAllResult playlistTrackAllResult = jsonObject.toJavaObject(PlaylistTrackAllResult.class);
             List<PlaylistTrackAllResult.SongsDTO> songsPage = playlistTrackAllResult.getSongs();
             if (songsPage == null || songsPage.isEmpty()) {
-                log.info("网易云歌单 {} 第 {} 页返回空，停止抓取，Phase1 共获取 {} / {} 首", playlistId, page + 1, songs.size(),
-                        totalTracks);
+                log.info("网易云歌单 {} 第 {} 页返回空，停止抓取，Phase1 共获取 {} / {} 首（唯一）", playlistId, page + 1,
+                        phase1SeenIds.size(), totalTracks);
                 break;
             }
-            songs.addAll(songsPage);
-            reportProgress(progressListener, "fetching", Math.min(songs.size(), totalTracks), totalTracks,
-                    "正在抓取网易云歌单，已获取 " + songs.size() + " / " + totalTracks + " 首…");
-            if (songs.size() >= totalTracks) {
+            // 只加入未见过的歌曲（去重），避免 API 重复返回同一批歌曲时虚增计数
+            int newInThisPage = 0;
+            for (PlaylistTrackAllResult.SongsDTO s : songsPage) {
+                if (s.getId() != null && phase1SeenIds.add(s.getId())) {
+                    songs.add(s);
+                    newInThisPage++;
+                }
+            }
+            reportProgress(progressListener, "fetching", Math.min(phase1SeenIds.size(), totalTracks), totalTracks,
+                    "正在抓取网易云歌单，已获取 " + phase1SeenIds.size() + " / " + totalTracks + " 首…");
+            if (phase1SeenIds.size() >= totalTracks) {
+                break;
+            }
+            // 本页没有带来任何新歌曲（全部重复），说明 API 无法再提供新数据，停止翻页
+            if (newInThisPage == 0) {
+                log.info("网易云歌单 {} 第 {} 页全部为重复歌曲，停止翻页，Phase1 共 {} / {} 首（唯一）", playlistId, page + 1,
+                        phase1SeenIds.size(), totalTracks);
                 break;
             }
         }
 
+        log.info("网易云歌单 {} Phase1 完成，获取唯一歌曲 {} / {} 首", playlistId, phase1SeenIds.size(), totalTracks);
+
         // Phase 2: 当 Phase1 未拉满所有歌曲时，通过 trackIds + /song/detail 补齐剩余部分
-        // OkHttp 对同一 URL 的 POST 响应存在磁盘缓存，因此只在 Phase1 已确认不足时才调用少量批次
-        if (totalTracks > songs.size() && !allTrackIds.isEmpty()) {
-            log.info("网易云歌单 {} Phase1 获得 {} 首，期望 {} 首，启动 Phase2 补齐剩余", playlistId, songs.size(), totalTracks);
-            // 收集 Phase1 已获得的 ID，避免重复
-            Set<Long> phase1Ids = new HashSet<>();
-            for (PlaylistTrackAllResult.SongsDTO s : songs) {
-                if (s.getId() != null)
-                    phase1Ids.add(s.getId());
-            }
-            // 只取 Phase1 未获得的 ID
+        // 使用唯一 ID 计数（phase1SeenIds.size()）而非 songs.size() 作为判断依据，
+        // 避免因 API 返回重复数据虚增 songs.size() 导致条件误判跳过 Phase2
+        if (!allTrackIds.isEmpty() && allTrackIds.size() > phase1SeenIds.size()) {
+            log.info("网易云歌单 {} Phase1 获得唯一 {} 首，trackIds 共 {} 首，启动 Phase2 补齐剩余", playlistId,
+                    phase1SeenIds.size(), allTrackIds.size());
+            // 只取 Phase1 未获得的 ID（直接复用外层 phase1SeenIds）
             List<Long> remainingIds = allTrackIds.stream()
-                    .filter(id -> !phase1Ids.contains(id))
+                    .filter(id -> !phase1SeenIds.contains(id))
                     .collect(Collectors.toList());
             log.info("网易云歌单 {} Phase2 需补齐 {} 首", playlistId, remainingIds.size());
             int batchSize = 500;

@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 /**
@@ -57,36 +58,43 @@ public class TextMusicPlayListParser {
                     try {
                         return new ParserEntity().setSongName(sa[0].trim()).setArtistsName(sa[1].trim());
                     } catch (ArrayIndexOutOfBoundsException e) {
-                        return  new ParserEntity().setSongName(m.trim()).setArtistsName("");
+                        return new ParserEntity().setSongName(m.trim()).setArtistsName("");
                     }
                 }).collect(Collectors.toList());
 
     }
 
-
     public List<ParserEntity> parserParserEntity(List<ParserEntity> parserEntities) throws IOException {
-        //        酷我-网易-qqvip-酷狗-qq
+        return parserParserEntity(parserEntities, null);
+    }
+
+    public List<ParserEntity> parserParserEntity(List<ParserEntity> parserEntities,
+            BiConsumer<Integer, Integer> progressCallback) throws IOException {
+        // 酷我-网易-qqvip-酷狗-qq
         SqConfig sqConfig = SqConfigCache.getSqConfig(SetConfigEnum.PLUG_KW_OPEN);
         SqConfig netOpen = SqConfigCache.getSqConfig(SetConfigEnum.PLUG_NETEASE_OPEN);
         SqConfig qqvipOpen = SqConfigCache.getSqConfig(SetConfigEnum.PLUG_QQVIP_OPEN);
         SqConfig kgOpen = SqConfigCache.getSqConfig(SetConfigEnum.PLUG_KG_OPEN);
+        int total = parserEntities.size();
+        int[] current = { 0 };
         for (ParserEntity parserEntity : parserEntities) {
-            //每一个处理增加500 ms间隔
+            // 每一个处理增加500 ms间隔
             try {
                 Thread.sleep(300);
             } catch (InterruptedException e) {
             }
 
             try {
-                //组合搜索条件
+                // 组合搜索条件
                 if (StringUtils.isBlank(parserEntity.getSongName())) {
                     parserEntity.setIsDetection(false);
                     continue;
                 }
                 String searchKey = parserEntity.getSongName().trim();
-                if (StringUtils.isNotBlank(parserEntity.getArtistsName())){
+                if (StringUtils.isNotBlank(parserEntity.getArtistsName())) {
                     // 如果艺术家名字包含分隔符（/、& 或 ;），则分割并取第一个非空的艺术家名
-                    if (parserEntity.getArtistsName().contains("/") || parserEntity.getArtistsName().contains("&") || parserEntity.getArtistsName().contains(";")) {
+                    if (parserEntity.getArtistsName().contains("/") || parserEntity.getArtistsName().contains("&")
+                            || parserEntity.getArtistsName().contains(";")) {
                         String[] split = parserEntity.getArtistsName().split("[/&;]");
                         // 遍历分割结果，取第一个非空的值
                         for (String artist : split) {
@@ -103,54 +111,61 @@ public class TextMusicPlayListParser {
 
                 if (sqConfig.getConfigValue().equals(DbBooleanConvert.YES.getBooleanValue().toString())) {
 
-                    PlugSearchResult<PlugSearchMusicResult> plugSearchMusicResultPlugSearchResult = nKwHander.querySongByName(searchKeyData);
-                    //找出匹配的
+                    PlugSearchResult<PlugSearchMusicResult> plugSearchMusicResultPlugSearchResult = nKwHander
+                            .querySongByName(searchKeyData);
+                    // 找出匹配的
                     extracted(parserEntity, plugSearchMusicResultPlugSearchResult);
                 }
 
-
-                if ( parserEntity.getIsDetection() == null || !parserEntity.getIsDetection()) {
+                if (parserEntity.getIsDetection() == null || !parserEntity.getIsDetection()) {
                     if (netOpen.getConfigValue().equals(DbBooleanConvert.YES.getBooleanValue().toString())) {
-                        PlugSearchResult<PlugSearchMusicResult> plugSearchMusicResultPlugSearchResult = neteaseHander.querySongByName(searchKeyData);
+                        PlugSearchResult<PlugSearchMusicResult> plugSearchMusicResultPlugSearchResult = neteaseHander
+                                .querySongByName(searchKeyData);
                         extracted(parserEntity, plugSearchMusicResultPlugSearchResult);
                     }
                 }
                 if (parserEntity.getIsDetection() == null || !parserEntity.getIsDetection()) {
                     if (qqvipOpen.getConfigValue().equals(DbBooleanConvert.YES.getBooleanValue().toString())) {
-                        PlugSearchResult<PlugSearchMusicResult> plugSearchMusicResultPlugSearchResult = qqvipHander.querySongByName(searchKeyData);
+                        PlugSearchResult<PlugSearchMusicResult> plugSearchMusicResultPlugSearchResult = qqvipHander
+                                .querySongByName(searchKeyData);
                         extracted(parserEntity, plugSearchMusicResultPlugSearchResult);
                     }
                 }
                 if (parserEntity.getIsDetection() == null || !parserEntity.getIsDetection()) {
                     if (kgOpen.getConfigValue().equals(DbBooleanConvert.YES.getBooleanValue().toString())) {
-                        PlugSearchResult<PlugSearchMusicResult> plugSearchMusicResultPlugSearchResult = kGHander.querySongByName(searchKeyData);
+                        PlugSearchResult<PlugSearchMusicResult> plugSearchMusicResultPlugSearchResult = kGHander
+                                .querySongByName(searchKeyData);
                         extracted(parserEntity, plugSearchMusicResultPlugSearchResult);
                     }
                 }
             } catch (Exception e) {
-                log.error("解析失败:{}",parserEntity);
+                log.error("解析失败:{}", parserEntity);
             }
-
+            current[0]++;
+            if (progressCallback != null) {
+                progressCallback.accept(current[0], total);
+            }
         }
         return parserEntities;
     }
 
-    private static void extracted(ParserEntity parserEntity, PlugSearchResult<PlugSearchMusicResult> plugSearchMusicResultPlugSearchResult) {
+    private static void extracted(ParserEntity parserEntity,
+            PlugSearchResult<PlugSearchMusicResult> plugSearchMusicResultPlugSearchResult) {
         if (!plugSearchMusicResultPlugSearchResult.getRecords().isEmpty()) {
             List<PlugSearchMusicResult> records = plugSearchMusicResultPlugSearchResult.getRecords();
             for (PlugSearchMusicResult record : records) {
-                if (record.getName().trim().equals(parserEntity.getSongName().trim())){
-                    //匹配成功歌曲名称
-                    if (StringUtils.isNotBlank(parserEntity.getArtistsName())){
-                        if (record.getArtistName().contains(parserEntity.getArtistsName().trim())){
+                if (record.getName().trim().equals(parserEntity.getSongName().trim())) {
+                    // 匹配成功歌曲名称
+                    if (StringUtils.isNotBlank(parserEntity.getArtistsName())) {
+                        if (record.getArtistName().contains(parserEntity.getArtistsName().trim())) {
                             parserEntity.setIsDetection(true);
                             parserEntity.setPlugSearchMusicResult(record);
                             parserEntity.setPlugName(plugSearchMusicResultPlugSearchResult.getPlugName());
                             break;
-                        }else{
+                        } else {
                             parserEntity.setIsDetection(false);
                         }
-                    }else{
+                    } else {
                         parserEntity.setIsDetection(true);
                         parserEntity.setPlugSearchMusicResult(record);
                         parserEntity.setPlugName(plugSearchMusicResultPlugSearchResult.getPlugName());
@@ -158,7 +173,6 @@ public class TextMusicPlayListParser {
                     }
                 }
             }
-
 
         }
     }

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(G:\\Projects\\simple_sq_music_plus_web/**)"
+    ]
+  }
+}

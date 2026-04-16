@@ -1,6 +1,7 @@
 package com.sqmusicplus.v3.download;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.sqmusicplus.v3.base.entity.vo.ParserEntity;
 import com.sqmusicplus.v3.plug.entity.Music;
 import lombok.Data;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -125,6 +126,27 @@ public class ParseJobCache {
         return previewSongs;
     }
 
+    public void textPreviewDone(String jobId, List<ParserEntity> entities) {
+        ParseJobStatus s = jobMap.get(jobId);
+        if (s == null)
+            return;
+        int total = entities.size();
+        s.setPhase("done");
+        s.setCurrent(total);
+        s.setTotal(total);
+        s.setParserEntities(entities);
+        s.setMessage("识别完成，共 " + total + " 条");
+        touch(s);
+        s.setFinishedAt(System.currentTimeMillis());
+    }
+
+    public List<ParserEntity> getParserEntities(String jobId) {
+        ParseJobStatus s = jobMap.get(jobId);
+        if (s == null)
+            return null;
+        return s.getParserEntities();
+    }
+
     public void error(String jobId, String errorMsg) {
         ParseJobStatus s = jobMap.get(jobId);
         if (s == null)
@@ -182,6 +204,8 @@ public class ParseJobCache {
         /** 服务端保留的完整曲目列表，供下载时复用 */
         @JsonIgnore
         private List<Music> rawSongs;
+        /** 文本歌单解析完成后的结果列表 */
+        private List<ParserEntity> parserEntities;
 
         public int getPercent() {
             if (total <= 0)

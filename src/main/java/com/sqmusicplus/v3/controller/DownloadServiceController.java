@@ -378,6 +378,81 @@ public class DownloadServiceController {
     }
 
     /**
+     * 异步预览文本歌单（不超时，通过 parseJobStatus 轮询）
+     */
+    @SaCheckLogin
+    @PostMapping("/previewParserText")
+    public AjaxResult previewParserText(@RequestBody ParserTextParam param) {
+        if (StringUtils.isBlank(param.getText())) {
+            return AjaxResult.error("请输入要解析的文本");
+        }
+        String jobId = UUID.randomUUID().toString();
+        parseJobCache.create(jobId);
+        threadPoolTaskExecutor.execute(() -> doPreviewText(jobId, param.getText()));
+        return AjaxResult.success("已提交识别任务", jobId);
+    }
+
+    /** 后台异步执行文本歌单识别（不入队） */
+    private void doPreviewText(String jobId, String text) {
+        try {
+            List<ParserEntity> parsed = textMusicPlayListParser.parser(text);
+            int total = parsed.size();
+            parseJobCache.updateStage(jobId, "matching", 0, total, "开始跨源匹配…0 / " + total);
+            List<ParserEntity> result = textMusicPlayListParser.parserParserEntity(parsed,
+                    (current, tot) -> parseJobCache.updateStage(jobId, "matching", current, tot,
+                            "跨源匹配中…" + current + " / " + tot));
+            parseJobCache.textPreviewDone(jobId, result);
+        } catch (Exception e) {
+            log.error("文本歌单识别失败 jobId={}", jobId, e);
+            parseJobCache.error(jobId, e.getMessage() != null ? e.getMessage() : "未知错误");
+        }
+    }
+
+    /**
+     * 下载文本识别 Job 的结果（通过 jobId 复用缓存，避免大请求体）
+     */
+    @SaCheckLogin
+    @PostMapping("/downloadParserTextJob")
+    public AjaxResult downloadParserTextJob(@RequestBody DownlaodParserUrl param) {
+        String jobId = param.getPreviewJobId();
+        if (StringUtils.isBlank(jobId)) {
+            return AjaxResult.error("jobId 不能为空");
+        }
+        List<ParserEntity> entities = parseJobCache.getParserEntities(jobId);
+        if (entities == null) {
+            return AjaxResult.error("任务不存在或已过期，请重新识别");
+        }
+        List<Integer> selectedIndexes = param.getSelectedIndexes();
+        List<ParserEntity> toDownload;
+        if (selectedIndexes != null && !selectedIndexes.isEmpty()) {
+            toDownload = new ArrayList<>();
+            for (int idx : selectedIndexes) {
+                if (idx >= 0 && idx < entities.size()) {
+                    toDownload.add(entities.get(idx));
+                }
+            }
+        } else {
+            toDownload = entities;
+        }
+        ArrayList<DownloadInfo> downloadInfos = new ArrayList<>();
+        for (ParserEntity parserEntity : toDownload) {
+            PlugSearchMusicResult plugSearchMusicResult = parserEntity.getPlugSearchMusicResult();
+            if (plugSearchMusicResult == null || StringUtils.isBlank(plugSearchMusicResult.getPlugName())) {
+                continue;
+            }
+            SearchHanderAbstract plugHander = MusicUtils.getPlugHander(plugSearchMusicResult.getPlugName(),
+                    searchHanderAbstractList);
+            DownloadInfo downloadInfo = plugHander.musicToDownloadInfo(plugSearchMusicResult, null, false);
+            downloadInfos.add(downloadInfo);
+        }
+        Boolean add = downloadInfoService.add(downloadInfos);
+        if (add) {
+            return AjaxResult.success("下载成功，共 " + downloadInfos.size() + " 首", downloadInfos);
+        }
+        return AjaxResult.error("下载失败");
+    }
+
+    /**
      * 批量下载解析的文本歌曲 替代解析方法
      * 
      * @param parserEntities

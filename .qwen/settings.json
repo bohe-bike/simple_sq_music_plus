@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(G:\\Projects\\simple_sq_music_plus_web/**)",
+      "Read(G:\\Projects\\simple_sq_music_plus_web\\vue/**)"
+    ]
+  },
+  "$version": 3
+}
