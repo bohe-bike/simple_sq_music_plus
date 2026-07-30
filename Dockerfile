@@ -1,4 +1,7 @@
-FROM maven:3.9.9-eclipse-temurin-17 AS builder
+ARG MAVEN_IMAGE=maven:3.9.9-eclipse-temurin-17
+ARG RUNTIME_IMAGE=amazoncorretto:17-alpine
+
+FROM ${MAVEN_IMAGE} AS builder
 LABEL maintainer="SQ"
 
 WORKDIR /build/
@@ -14,7 +17,7 @@ COPY src /build/src/
 RUN mvn clean package -B
 
 # 使用更稳定、体积更小的 JRE 运行时镜像
-FROM amazoncorretto:17-alpine
+FROM ${RUNTIME_IMAGE}
 
 # 设置工作目录
 WORKDIR /app

@@ -1,118 +1,180 @@
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = "Medium")]
 param(
     [string]$Version = "",
-    [string]$FrontendVersion = "",
     [string]$Registry = "crpi-0ajp4qol6rvhbqjh.cn-shanghai.personal.cr.aliyuncs.com",
     [string]$Namespace = "coco_bike",
-    [string]$BackendRepository = "simple_sq_music_plus_main",
-    [string]$FrontendRepository = "simple_sq_music_plus_web",
-    [string]$Username = "444503829@qq.com",
-    [string]$BackendImage = "sqmusic_main:local",
-    [string]$FrontendImage = "sqmusic_web:local",
-    [switch]$UseVpc
+    [string]$Repository = "simple_sq_music_plus_main",
+    [string]$Username = $env:ALIYUN_DOCKER_USERNAME,
+    [string[]]$Platforms = @("linux/amd64", "linux/arm64"),
+    [string]$Builder = "sqmusic-release",
+    [string]$MavenImage = "docker.m.daocloud.io/library/maven:3.9.9-eclipse-temurin-17",
+    [string]$RuntimeImage = "docker.m.daocloud.io/library/amazoncorretto:17-alpine",
+    [switch]$NoLatest,
+    [switch]$NoCache,
+    [switch]$SkipLogin
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$WebBuildContext = "G:\Projects\simple_sq_music_plus_web\vue"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$dockerfile = Join-Path $projectRoot "Dockerfile"
+$applicationConfig = Join-Path $projectRoot "src\main\resources\application.yml"
 
-# 若未指定后端版本，自动从 pom.xml 读取
-if ([string]::IsNullOrWhiteSpace($Version)) {
-    [xml]$pom = Get-Content (Join-Path $PSScriptRoot "..\pom.xml")
-    $Version = $pom.project.version
-    Write-Host "从 pom.xml 读取后端版本: $Version"
-}
-
-# 若未指定前端版本，自动从 package.json 读取
-if ([string]::IsNullOrWhiteSpace($FrontendVersion)) {
-    $packageJson = Get-Content (Join-Path $WebBuildContext "package.json") -Raw | ConvertFrom-Json
-    $FrontendVersion = $packageJson.version
-    Write-Host "从 package.json 读取前端版本: $FrontendVersion"
-}
-
-function Require-Image {
+function Invoke-Docker {
     param(
-        [string]$ImageName
+        [Parameter(Mandatory = $true)]
+        [string[]]$DockerArguments,
+        [Parameter(Mandatory = $true)]
+        [string]$FailureMessage
     )
 
-    $imageId = docker image inspect $ImageName --format "{{.Id}}" 2>$null
-    if (-not $imageId) {
-        throw "未找到本地镜像: $ImageName"
+    & docker @DockerArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$FailureMessage (docker exit code: $LASTEXITCODE)"
     }
 }
 
-function Login-Registry {
+function Get-ApplicationVersion {
+    param([string]$ConfigPath)
+
+    $content = Get-Content -Raw -LiteralPath $ConfigPath
+    $match = [regex]::Match($content, '(?m)^\s*version:\s*["'']?([^\s#"'']+)')
+    if (-not $match.Success) {
+        throw "无法从 $ConfigPath 读取 version。"
+    }
+
+    return $match.Groups[1].Value
+}
+
+function Connect-AliyunRegistry {
     param(
         [string]$RegistryHost,
         [string]$RegistryUsername
     )
 
+    if ([string]::IsNullOrWhiteSpace($RegistryUsername)) {
+        $RegistryUsername = Read-Host "请输入阿里云镜像仓库用户名"
+    }
+    if ([string]::IsNullOrWhiteSpace($RegistryUsername)) {
+        throw "未提供阿里云镜像仓库用户名。可设置 ALIYUN_DOCKER_USERNAME。"
+    }
+
     $plainPassword = $env:ALIYUN_DOCKER_PASSWORD
     if ([string]::IsNullOrWhiteSpace($plainPassword)) {
         $securePassword = Read-Host "请输入阿里云镜像仓库密码" -AsSecureString
-        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+        $passwordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
         try {
-            $plainPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+            $plainPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordPointer)
         }
         finally {
-            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordPointer)
         }
     }
 
     if ([string]::IsNullOrWhiteSpace($plainPassword)) {
-        throw "未提供阿里云镜像仓库密码。可设置环境变量 ALIYUN_DOCKER_PASSWORD，或在运行脚本时手动输入。"
+        throw "未提供阿里云镜像仓库密码。可设置 ALIYUN_DOCKER_PASSWORD。"
     }
 
-    $plainPassword | docker login --username=$RegistryUsername --password-stdin $RegistryHost
-}
-
-function Push-ImageWithTags {
-    param(
-        [string]$SourceImage,
-        [string]$TargetRepository,
-        [string[]]$Tags
-    )
-
-    foreach ($tag in $Tags) {
-        $targetImage = "${registryHost}/${Namespace}/${TargetRepository}:${tag}"
-        Write-Host "打标镜像: $SourceImage -> $targetImage"
-        docker tag $SourceImage $targetImage
-
-        Write-Host "推送镜像: $targetImage"
-        docker push $targetImage
+    try {
+        $plainPassword | & docker login $RegistryHost --username $RegistryUsername --password-stdin
+        if ($LASTEXITCODE -ne 0) {
+            throw "登录阿里云镜像仓库失败 (docker exit code: $LASTEXITCODE)"
+        }
+    }
+    finally {
+        $plainPassword = $null
     }
 }
 
-$registryHost = $Registry
-if ($UseVpc) {
-    $registryHost = $registryHost -replace "\.cn-shanghai\.personal\.cr\.aliyuncs\.com$", "-vpc.cn-shanghai.personal.cr.aliyuncs.com"
+function Initialize-BuildxBuilder {
+    param([string]$BuilderName)
+
+    $null = & docker buildx inspect $BuilderName 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "创建多架构 builder: $BuilderName"
+        Invoke-Docker -DockerArguments @(
+            "buildx", "create",
+            "--name", $BuilderName,
+            "--driver", "docker-container",
+            "--use"
+        ) -FailureMessage "创建 buildx builder 失败"
+    }
+    else {
+        Invoke-Docker -DockerArguments @(
+            "buildx", "use", $BuilderName
+        ) -FailureMessage "切换 buildx builder 失败"
+    }
+
+    Invoke-Docker -DockerArguments @(
+        "buildx", "inspect", "--bootstrap", $BuilderName
+    ) -FailureMessage "初始化 buildx builder 失败"
 }
 
-$publishTags = @($Version, "latest")
+if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    throw "未找到 docker 命令，请先安装并启动 Docker Desktop。"
+}
+if (-not (Test-Path -LiteralPath $dockerfile)) {
+    throw "未找到 Dockerfile: $dockerfile"
+}
+if (-not (Test-Path -LiteralPath $applicationConfig)) {
+    throw "未找到应用配置: $applicationConfig"
+}
+if ($Platforms.Count -eq 0) {
+    throw "至少需要指定一个目标平台。"
+}
 
-Write-Host "构建后端镜像: $BackendImage"
-docker build -t $BackendImage -f (Join-Path $PSScriptRoot "..\Dockerfile") (Join-Path $PSScriptRoot "..")
-if ($LASTEXITCODE -ne 0) { throw "后端镜像构建失败" }
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = Get-ApplicationVersion -ConfigPath $applicationConfig
+}
+$Version = $Version.Trim() -replace '^[vV]', ''
+if ($Version -notmatch '^[0-9A-Za-z][0-9A-Za-z_.-]{0,127}$') {
+    throw "版本号不能作为 Docker 标签使用: $Version"
+}
 
-Write-Host "构建前端镜像: $FrontendImage (来源: $WebBuildContext)"
-docker build -t $FrontendImage $WebBuildContext
-if ($LASTEXITCODE -ne 0) { throw "前端镜像构建失败" }
+$image = "$Registry/$Namespace/$Repository"
+$tags = @("${image}:v$Version")
+if (-not $NoLatest) {
+    $tags += "${image}:latest"
+}
 
-Write-Host "检查本地镜像..."
-Require-Image -ImageName $BackendImage
-Require-Image -ImageName $FrontendImage
+Write-Host "发布版本: $Version"
+Write-Host "目标平台: $($Platforms -join ', ')"
+Write-Host "目标标签:"
+$tags | ForEach-Object { Write-Host "  $_" }
 
-Write-Host "登录阿里云镜像仓库: $registryHost"
-Login-Registry -RegistryHost $registryHost -RegistryUsername $Username
+if (-not $PSCmdlet.ShouldProcess($image, "构建并推送多架构镜像")) {
+    return
+}
 
-Write-Host "推送后端镜像..."
-Push-ImageWithTags -SourceImage $BackendImage -TargetRepository $BackendRepository -Tags $publishTags
+if (-not $SkipLogin) {
+    Connect-AliyunRegistry -RegistryHost $Registry -RegistryUsername $Username
+}
 
-Write-Host "推送前端镜像..."
-$frontendPublishTags = @($FrontendVersion, "latest")
-Push-ImageWithTags -SourceImage $FrontendImage -TargetRepository $FrontendRepository -Tags $frontendPublishTags
+Initialize-BuildxBuilder -BuilderName $Builder
 
-Write-Host "推送完成。"
-Write-Host "后端镜像: ${registryHost}/${Namespace}/${BackendRepository}:${Version}"
-Write-Host "后端镜像: ${registryHost}/${Namespace}/${BackendRepository}:latest"
-Write-Host "前端镜像: ${registryHost}/${Namespace}/${FrontendRepository}:${Version}"
-Write-Host "前端镜像: ${registryHost}/${Namespace}/${FrontendRepository}:latest"
+$buildArguments = @(
+    "buildx", "build",
+    "--builder", $Builder,
+    "--platform", ($Platforms -join ","),
+    "--file", $dockerfile,
+    "--pull",
+    "--provenance=false",
+    "--build-arg", "MAVEN_IMAGE=$MavenImage",
+    "--build-arg", "RUNTIME_IMAGE=$RuntimeImage",
+    "--label", "org.opencontainers.image.title=Simple Music Server",
+    "--label", "org.opencontainers.image.version=v$Version",
+    "--push"
+)
+foreach ($tag in $tags) {
+    $buildArguments += @("--tag", $tag)
+}
+if ($NoCache) {
+    $buildArguments += "--no-cache"
+}
+$buildArguments += $projectRoot
+
+Invoke-Docker -DockerArguments $buildArguments -FailureMessage "构建或推送镜像失败"
+
+Write-Host "推送完成:"
+$tags | ForEach-Object { Write-Host "  $_" }
