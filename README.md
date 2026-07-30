@@ -14,11 +14,14 @@
 - `POST /api/lyricRepair/start`：启动歌词补全任务，同一时间只允许一个补全任务运行。
 - `GET /api/lyricRepair/status/{jobId}`：查询扫描或补全进度与失败明细。
 
+补全任务默认优先使用原下载音源；原音源无歌词时，会从已启用的酷我、网易云、QQ、酷狗和 Apple Music 中按顺序搜索。跨源结果必须同时精确匹配歌名和至少一位歌手；专辑名用于优先消除同名版本，无法唯一确定时不会写入歌词。
+
 两个 POST 接口均可传入以下参数：
 
 ```json
 {
-  "overwriteExisting": false
+  "overwriteExisting": false,
+  "crossSourceSearch": true
 }
 ```
 

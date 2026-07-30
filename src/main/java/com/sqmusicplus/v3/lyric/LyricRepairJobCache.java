@@ -89,6 +89,7 @@ public class LyricRepairJobCache {
         private int skippedExisting;
         private int matched;
         private int repaired;
+        private int crossSourceRepaired;
         private int unmatched;
         private int noLyric;
         private int failed;

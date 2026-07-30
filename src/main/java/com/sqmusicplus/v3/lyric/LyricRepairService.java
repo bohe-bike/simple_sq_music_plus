@@ -7,6 +7,9 @@ import com.sqmusicplus.v3.config.SqConfigCache;
 import com.sqmusicplus.v3.download.DownloadStatus;
 import com.sqmusicplus.v3.lyric.vo.LyricRepairRequest;
 import com.sqmusicplus.v3.plug.base.hander.SearchHanderAbstract;
+import com.sqmusicplus.v3.plug.entity.PlugSearchMusicResult;
+import com.sqmusicplus.v3.plug.entity.PlugSearchResult;
+import com.sqmusicplus.v3.plug.entity.SearchKeyData;
 import com.sqmusicplus.v3.utils.MusicUtils;
 import com.sqmusicplus.v3.utils.StringUtils;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +34,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 @Service
@@ -39,6 +43,12 @@ public class LyricRepairService {
 
     private static final Set<String> AUDIO_EXTENSIONS = Set.of(
             "mp3", "flac", "ape", "m4a", "aac", "ogg", "wav", "wma");
+    private static final List<LyricSource> CROSS_SOURCE_ORDER = List.of(
+            new LyricSource("kw", "酷我", SetConfigEnum.PLUG_KW_OPEN),
+            new LyricSource("netease", "网易云", SetConfigEnum.PLUG_NETEASE_OPEN),
+            new LyricSource("qqvip", "QQ", SetConfigEnum.PLUG_QQVIP_OPEN),
+            new LyricSource("kg", "酷狗", SetConfigEnum.PLUG_KG_OPEN),
+            new LyricSource("apple", "Apple Music", SetConfigEnum.PLUG_APPLE_OPEN));
 
     private final AtomicBoolean repairRunning = new AtomicBoolean(false);
 
@@ -61,6 +71,7 @@ public class LyricRepairService {
 
     public void execute(String jobId, LyricRepairRequest request, boolean previewOnly) {
         boolean overwriteExisting = request != null && Boolean.TRUE.equals(request.getOverwriteExisting());
+        boolean crossSourceSearch = request == null || !Boolean.FALSE.equals(request.getCrossSourceSearch());
         try {
             Path root = resolveDownloadRoot();
             jobCache.update(jobId, status -> {
@@ -92,6 +103,7 @@ public class LyricRepairService {
                 status.setMessage(previewOnly ? "正在匹配历史下载记录" : "正在补充歌词");
             });
 
+            Map<String, LyricLookupResult> lyricCache = new HashMap<>();
             for (int index = 0; index < candidates.size(); index++) {
                 Path audioFile = candidates.get(index);
                 MatchResult match = recordIndex.match(audioFile, root);
@@ -111,7 +123,7 @@ public class LyricRepairService {
                     continue;
                 }
 
-                repairOne(jobId, root, audioFile, record);
+                repairOne(jobId, root, audioFile, record, crossSourceSearch, lyricCache);
             }
 
             if (previewOnly) {
@@ -128,20 +140,32 @@ public class LyricRepairService {
         }
     }
 
-    private void repairOne(String jobId, Path root, Path audioFile, DownloadInfo record) {
+    private void repairOne(String jobId, Path root, Path audioFile, DownloadInfo record,
+            boolean crossSourceSearch, Map<String, LyricLookupResult> lyricCache) {
         try {
-            SearchHanderAbstract handler = MusicUtils.getPlugHander(record.getDownloadPlugName(),
-                    searchHanderAbstractList);
-            String lyric = handler.queryLyric(record.getDownloadMusicId());
-            if (StringUtils.isBlank(lyric)) {
+            List<SearchHanderAbstract> fallbackHandlers = crossSourceSearch
+                    ? enabledFallbackHandlers(record.getDownloadPlugName())
+                    : List.of();
+            LyricLookupResult lookup = lookupLyrics(record, crossSourceSearch, lyricCache, fallbackHandlers);
+            if (!lookup.hasLyric()) {
                 jobCache.update(jobId, status -> status.setNoLyric(status.getNoLyric() + 1));
-                jobCache.addDetail(jobId, buildItem(root, audioFile, "no_lyric", "音源未返回歌词", record));
+                String message = crossSourceSearch ? "所有可用音源均未找到匹配歌词" : "原音源未返回歌词";
+                jobCache.addDetail(jobId, buildItem(root, audioFile, "no_lyric", message, record));
                 return;
             }
 
-            writeLyricFile(sidecarPath(audioFile), lyric);
-            jobCache.update(jobId, status -> status.setRepaired(status.getRepaired() + 1));
-            jobCache.addDetail(jobId, buildItem(root, audioFile, "repaired", "歌词已写入", record));
+            writeLyricFile(sidecarPath(audioFile), lookup.lyric());
+            jobCache.update(jobId, status -> {
+                status.setRepaired(status.getRepaired() + 1);
+                if (lookup.crossSource()) {
+                    status.setCrossSourceRepaired(status.getCrossSourceRepaired() + 1);
+                }
+            });
+            String message = lookup.crossSource()
+                    ? "已从" + sourceLabel(lookup.plugName()) + "补全歌词"
+                    : "歌词已从原音源写入";
+            jobCache.addDetail(jobId, buildItem(root, audioFile, "repaired", message, record,
+                    lookup.plugName(), lookup.musicId()));
         } catch (Exception e) {
             log.warn("补充歌词失败 file={}, plug={}, musicId={}", audioFile,
                     record.getDownloadPlugName(), record.getDownloadMusicId(), e);
@@ -149,6 +173,181 @@ public class LyricRepairService {
             String message = e.getMessage() != null ? e.getMessage() : "未知错误";
             jobCache.addDetail(jobId, buildItem(root, audioFile, "failed", message, record));
         }
+    }
+
+    LyricLookupResult lookupLyrics(DownloadInfo record, boolean crossSourceSearch,
+            Map<String, LyricLookupResult> lyricCache, List<SearchHanderAbstract> fallbackHandlers) {
+        try {
+            SearchHanderAbstract originalHandler = MusicUtils.getPlugHander(record.getDownloadPlugName(),
+                    searchHanderAbstractList);
+            String lyric = originalHandler.queryLyric(record.getDownloadMusicId());
+            if (StringUtils.isNotBlank(lyric)) {
+                return LyricLookupResult.found(lyric, originalHandler.getPlugName(),
+                        record.getDownloadMusicId(), false);
+            }
+        } catch (Exception e) {
+            log.warn("原音源歌词查询失败 plug={}, musicId={}", record.getDownloadPlugName(),
+                    record.getDownloadMusicId(), e);
+        }
+
+        if (!crossSourceSearch || fallbackHandlers.isEmpty()) {
+            return LyricLookupResult.notFound();
+        }
+
+        String cacheKey = lyricCacheKey(record);
+        LyricLookupResult cached = lyricCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+        LyricLookupResult result = searchCrossSources(record, fallbackHandlers);
+        lyricCache.put(cacheKey, result);
+        return result;
+    }
+
+    LyricLookupResult searchCrossSources(DownloadInfo record, List<SearchHanderAbstract> handlers) {
+        String firstArtist = firstArtist(record.getDownloadArtistname());
+        String keyword = record.getDownloadMusicname();
+        if (StringUtils.isNotBlank(firstArtist)) {
+            keyword += " " + firstArtist;
+        }
+        SearchKeyData searchKeyData = new SearchKeyData()
+                .setSearchkey(keyword)
+                .setPageIndex(1)
+                .setPageSize(20);
+
+        for (SearchHanderAbstract handler : handlers) {
+            try {
+                searchKeyData.setPlugName(handler.getPlugName());
+                PlugSearchResult<PlugSearchMusicResult> searchResult = handler.querySongByName(searchKeyData);
+                PlugSearchMusicResult candidate = selectLyricCandidate(record,
+                        searchResult != null ? searchResult.getRecords() : null);
+                if (candidate == null) {
+                    continue;
+                }
+                String lyric = candidate.getLyric();
+                String lyricMusicId = StringUtils.isNotBlank(candidate.getId())
+                        ? candidate.getId()
+                        : candidate.getLyricId();
+                if (StringUtils.isBlank(lyric) && StringUtils.isNotBlank(lyricMusicId)) {
+                    lyric = handler.queryLyric(lyricMusicId);
+                }
+                if (StringUtils.isNotBlank(lyric)) {
+                    return LyricLookupResult.found(lyric, handler.getPlugName(), lyricMusicId, true);
+                }
+            } catch (Exception e) {
+                log.warn("跨源歌词查询失败 plug={}, music={}", handler.getPlugName(),
+                        record.getDownloadMusicname(), e);
+            }
+        }
+        return LyricLookupResult.notFound();
+    }
+
+    private List<SearchHanderAbstract> enabledFallbackHandlers(String originalPlugName) {
+        return selectFallbackHandlers(originalPlugName, searchHanderAbstractList,
+                plugName -> CROSS_SOURCE_ORDER.stream()
+                        .filter(source -> source.plugName().equals(plugName))
+                        .anyMatch(source -> isPluginEnabled(source.config())));
+    }
+
+    static List<SearchHanderAbstract> selectFallbackHandlers(String originalPlugName,
+            List<SearchHanderAbstract> availableHandlers, Predicate<String> isEnabled) {
+        Map<String, SearchHanderAbstract> handlersByName = new HashMap<>();
+        for (SearchHanderAbstract handler : availableHandlers) {
+            handlersByName.put(handler.getPlugName(), handler);
+        }
+        String originalGroup = sourceGroup(originalPlugName);
+        List<SearchHanderAbstract> enabledHandlers = new ArrayList<>();
+        for (LyricSource source : CROSS_SOURCE_ORDER) {
+            if (sourceGroup(source.plugName()).equals(originalGroup) || !isEnabled.test(source.plugName())) {
+                continue;
+            }
+            SearchHanderAbstract handler = handlersByName.get(source.plugName());
+            if (handler != null) {
+                enabledHandlers.add(handler);
+            }
+        }
+        return enabledHandlers;
+    }
+
+    private boolean isPluginEnabled(SetConfigEnum config) {
+        return Boolean.parseBoolean(SqConfigCache.getSqConfigValue(config));
+    }
+
+    static PlugSearchMusicResult selectLyricCandidate(DownloadInfo record,
+            List<PlugSearchMusicResult> candidates) {
+        if (candidates == null || candidates.isEmpty()
+                || StringUtils.isBlank(record.getDownloadArtistname())) {
+            return null;
+        }
+        Set<String> expectedArtists = normalizedArtists(record.getDownloadArtistname());
+        String expectedTitle = normalize(record.getDownloadMusicname());
+        String expectedAlbum = normalize(record.getDownloadAlbumname());
+        Map<String, ScoredCandidate> matched = new LinkedHashMap<>();
+        for (PlugSearchMusicResult candidate : candidates) {
+            if (candidate == null || StringUtils.isBlank(candidate.getId())
+                    || !expectedTitle.equals(normalize(candidate.getName()))
+                    || !artistMatches(expectedArtists, candidate.getArtistName())) {
+                continue;
+            }
+            int score = 100;
+            if (StringUtils.isNotBlank(expectedAlbum)
+                    && expectedAlbum.equals(normalize(candidate.getAlbumName()))) {
+                score += 20;
+            }
+            String key = normalize(candidate.getPlugName()) + ":" + candidate.getId();
+            ScoredCandidate current = new ScoredCandidate(candidate, score);
+            ScoredCandidate existing = matched.get(key);
+            if (existing == null || current.score() > existing.score()) {
+                matched.put(key, current);
+            }
+        }
+        List<ScoredCandidate> ranked = matched.values().stream()
+                .sorted(Comparator.comparingInt(ScoredCandidate::score).reversed())
+                .toList();
+        if (ranked.isEmpty()) {
+            return null;
+        }
+        if (ranked.size() > 1 && ranked.get(0).score() == ranked.get(1).score()) {
+            return null;
+        }
+        return ranked.get(0).candidate();
+    }
+
+    private static boolean artistMatches(Set<String> expectedArtists, List<String> candidateArtists) {
+        if (candidateArtists == null || candidateArtists.isEmpty()) {
+            return false;
+        }
+        return candidateArtists.stream()
+                .flatMap(artist -> normalizedArtists(artist).stream())
+                .anyMatch(expectedArtists::contains);
+    }
+
+    private static Set<String> normalizedArtists(String artists) {
+        if (artists == null) {
+            return Set.of();
+        }
+        return Stream.of(artists.split("[/&;,，、]"))
+                .map(LyricRepairService::normalize)
+                .filter(StringUtils::isNotBlank)
+                .collect(java.util.stream.Collectors.toSet());
+    }
+
+    private static String lyricCacheKey(DownloadInfo record) {
+        return normalize(record.getDownloadMusicname()) + "|"
+                + normalize(record.getDownloadArtistname()) + "|"
+                + normalize(record.getDownloadAlbumname());
+    }
+
+    private static String sourceGroup(String plugName) {
+        return "qq".equals(plugName) || "qqvip".equals(plugName) ? "qq" : plugName;
+    }
+
+    private static String sourceLabel(String plugName) {
+        return CROSS_SOURCE_ORDER.stream()
+                .filter(source -> source.plugName().equals(plugName))
+                .map(LyricSource::label)
+                .findFirst()
+                .orElse(plugName);
     }
 
     private Path resolveDownloadRoot() throws IOException {
@@ -206,13 +405,18 @@ public class LyricRepairService {
 
     private LyricRepairJobCache.LyricRepairItem buildItem(Path root, Path audioFile, String status,
             String message, DownloadInfo record) {
+        return buildItem(root, audioFile, status, message, record, null, null);
+    }
+
+    private LyricRepairJobCache.LyricRepairItem buildItem(Path root, Path audioFile, String status,
+            String message, DownloadInfo record, String actualPlugName, String actualMusicId) {
         LyricRepairJobCache.LyricRepairItem item = new LyricRepairJobCache.LyricRepairItem();
         item.setFile(root.relativize(audioFile).toString());
         item.setStatus(status);
         item.setMessage(message);
         if (record != null) {
-            item.setPlugName(record.getDownloadPlugName());
-            item.setMusicId(record.getDownloadMusicId());
+            item.setPlugName(StringUtils.isNotBlank(actualPlugName) ? actualPlugName : record.getDownloadPlugName());
+            item.setMusicId(StringUtils.isNotBlank(actualMusicId) ? actualMusicId : record.getDownloadMusicId());
             item.setMusicName(record.getDownloadMusicname());
             item.setArtistName(record.getDownloadArtistname());
         }
@@ -237,6 +441,17 @@ public class LyricRepairService {
     static String titlePart(String fileBaseName) {
         int separatorIndex = fileBaseName.lastIndexOf(" - ");
         return separatorIndex > 0 ? fileBaseName.substring(0, separatorIndex) : fileBaseName;
+    }
+
+    private static String firstArtist(String artists) {
+        if (artists == null) {
+            return "";
+        }
+        return Stream.of(artists.split("[/&;,，、]"))
+                .map(String::trim)
+                .filter(StringUtils::isNotBlank)
+                .findFirst()
+                .orElse("");
     }
 
     static final class DownloadRecordIndex {
@@ -348,6 +563,26 @@ public class LyricRepairService {
     }
 
     private record ScoredRecord(DownloadInfo record, int score) {
+    }
+
+    private record ScoredCandidate(PlugSearchMusicResult candidate, int score) {
+    }
+
+    private record LyricSource(String plugName, String label, SetConfigEnum config) {
+    }
+
+    record LyricLookupResult(String lyric, String plugName, String musicId, boolean crossSource) {
+        static LyricLookupResult found(String lyric, String plugName, String musicId, boolean crossSource) {
+            return new LyricLookupResult(lyric, plugName, musicId, crossSource);
+        }
+
+        static LyricLookupResult notFound() {
+            return new LyricLookupResult(null, null, null, false);
+        }
+
+        boolean hasLyric() {
+            return StringUtils.isNotBlank(lyric);
+        }
     }
 
     static final class MatchResult {
