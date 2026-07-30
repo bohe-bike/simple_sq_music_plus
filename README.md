@@ -6,6 +6,22 @@
 
 是下载音乐工具，可以当普通的音乐下载工具使用，支持，flac，ape，mp3等格式的下载（根据码率不同）， 下载的歌曲目录结构支持emby 与 subsonic（后续开放） 类的服务，下载文件支持文件标签识别，歌词下载。
 
+## 歌词补全接口
+
+后端支持扫描已下载目录，并根据历史下载记录中的音源和歌曲 ID 补充同名 `.lrc` 文件。任务默认跳过已有且非空的歌词文件，不修改音频文件本身。
+
+- `POST /api/lyricRepair/preview`：异步扫描并预览可匹配文件。
+- `POST /api/lyricRepair/start`：启动歌词补全任务，同一时间只允许一个补全任务运行。
+- `GET /api/lyricRepair/status/{jobId}`：查询扫描或补全进度与失败明细。
+
+两个 POST 接口均可传入以下参数：
+
+```json
+{
+  "overwriteExisting": false
+}
+```
+
 ```js
 \Music下载根路径
        \歌手名称
