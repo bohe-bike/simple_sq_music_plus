@@ -1,11 +1,14 @@
 
 ## 推送阿里云多架构镜像
 
-`push_aliyun_images.ps1` 会从 `src/main/resources/application.yml` 读取版本，构建
-`linux/amd64` 和 `linux/arm64` 镜像，并直接推送以下标签：
+`push_aliyun_images.ps1` 会同时构建后端和前端的 `linux/amd64`、`linux/arm64`
+镜像。后端版本从 `src/main/resources/application.yml` 读取，前端版本从相邻的
+`simple_sq_music_plus_web/vue/package.json` 读取。
 
 - `crpi-0ajp4qol6rvhbqjh.cn-shanghai.personal.cr.aliyuncs.com/coco_bike/simple_sq_music_plus_main:v<版本>`
 - `crpi-0ajp4qol6rvhbqjh.cn-shanghai.personal.cr.aliyuncs.com/coco_bike/simple_sq_music_plus_main:latest`
+- `crpi-0ajp4qol6rvhbqjh.cn-shanghai.personal.cr.aliyuncs.com/coco_bike/simple_sq_music_plus_web:v<前端版本>`
+- `crpi-0ajp4qol6rvhbqjh.cn-shanghai.personal.cr.aliyuncs.com/coco_bike/simple_sq_music_plus_web:latest`
 
 推荐通过环境变量提供凭据：
 
@@ -21,11 +24,12 @@ $env:ALIYUN_DOCKER_PASSWORD = "阿里云镜像仓库密码"
 .\script\push_aliyun_images.ps1 -WhatIf
 ```
 
-可用 `-Version 4.0.1` 指定版本、`-NoLatest` 跳过 `latest` 标签，或用
-`-Registry`、`-Namespace`、`-Repository` 覆盖目标仓库。
+可用 `-Version 4.0.1`、`-FrontendVersion 4.2.1` 指定版本，使用 `-NoLatest`
+跳过 `latest` 标签，或用 `-SkipBackend`、`-SkipFrontend` 单独发布其中一个镜像。
+`-FrontendContext` 可覆盖前端目录。
 
 脚本默认通过 DaoCloud 镜像代理拉取 Maven 和 Java 基础镜像。可使用
-`-MavenImage`、`-RuntimeImage` 指定其他镜像地址。
+`-MavenImage`、`-RuntimeImage`、`-NodeImage`、`-NginxImage` 指定其他镜像地址。
 
 ## 更新脚本
 
